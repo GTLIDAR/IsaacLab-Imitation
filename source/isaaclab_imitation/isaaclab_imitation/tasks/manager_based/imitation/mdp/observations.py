@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import torch
-from isaaclab.envs import ImitationRLEnv
+from isaaclab_imitation.envs import ImitationRLEnv
 from isaaclab.managers import SceneEntityCfg
 
 

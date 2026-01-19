@@ -6,7 +6,7 @@ __all__ = ["imitation_g1_env_cfg", "agents"]
 
 gym.register(
     id="Isaac-Imitation-G1-v0",
-    entry_point="isaaclab.envs:ImitationRLEnv",
+    entry_point="isaaclab_imitation.envs:ImitationRLEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.imitation_g1_env_cfg:ImitationG1EnvCfg",

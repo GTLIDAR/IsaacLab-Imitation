@@ -12,7 +12,7 @@ from isaaclab.utils.math import (
     quat_apply,
 )
 
-from isaaclab.envs import ImitationRLEnv
+from isaaclab_imitation.envs import ImitationRLEnv
 
 
 def joint_pos_target_l2(

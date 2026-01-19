@@ -18,7 +18,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from isaaclab_assets.robots.unitree import G1_MINIMAL_CFG
 
 import isaaclab_tasks.manager_based.locomotion.velocity.mdp as mdp
-from isaaclab_tasks.manager_based.imitation.mdp import (
+from isaaclab_imitation.tasks.manager_based.imitation.mdp import (
     reference_joint_pos,
     reference_root_ang_vel,
     reference_root_lin_vel,
@@ -31,7 +31,7 @@ from isaaclab_tasks.manager_based.imitation.mdp import (
     track_root_quat,
 )
 
-from ...imitation_env_cfg import (
+from isaaclab_imitation.tasks.manager_based.imitation.imitation_env_cfg import (
     ImitationLearningEnvCfg,
 )
 
@@ -343,10 +343,9 @@ class ImitationG1EnvCfg(ImitationLearningEnvCfg):
         "sim": {"dt": 0.001},
         "decimation": 20,
     }  # Loader kwargs (required if Zarr does not exist)
-    dataset: dict = {
-        "trajectories": {"default": [], "amass": [], "lafan1": ["dance2_subject4"]}
-    }
+
     replay_reference: bool = False
+    replay_only: bool = False
     # Reference joint names for the robot from the reference qpos order (this is the order of G1 in loco-mujoco)
     reference_joint_names: list[str] = [
         "left_hip_pitch_joint",
@@ -461,3 +460,4 @@ class ImitationG1EnvCfg(ImitationLearningEnvCfg):
         # terminations
         self.terminations.base_contact.params["sensor_cfg"].body_names = "torso_link"
         self.terminations.base_too_low.params["asset_cfg"].body_names = "torso_link"
+        self.terminations = None

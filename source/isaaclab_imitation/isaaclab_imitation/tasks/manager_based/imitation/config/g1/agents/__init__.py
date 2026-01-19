@@ -1,1 +1,1 @@
-__name__ = "isaaclab_tasks.manager_based.imitation.config.g1.agents"
+__name__ = "isaaclab_imitation.tasks.manager_based.imitation.config.g1.agents"

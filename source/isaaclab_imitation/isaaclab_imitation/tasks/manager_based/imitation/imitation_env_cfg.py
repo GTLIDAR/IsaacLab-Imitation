@@ -25,7 +25,7 @@ from isaaclab.utils.assets import (
 )
 from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 
-import isaaclab_tasks.manager_based.imitation.mdp as mdp
+import isaaclab_imitation.tasks.manager_based.imitation.mdp as mdp
 
 from isaaclab.terrains.config import TerrainGeneratorCfg  # isort: skip
 
@@ -316,6 +316,7 @@ class ImitationLearningEnvCfg(ManagerBasedRLEnvCfg):
         }
     }
     replay_reference: bool = False
+    replay_only: bool = False
     # Reference joint names for the robot from the reference qpos order (this is the order of G1 in loco-mujoco)
     reference_joint_names: list[str] = [
         "root_x",
