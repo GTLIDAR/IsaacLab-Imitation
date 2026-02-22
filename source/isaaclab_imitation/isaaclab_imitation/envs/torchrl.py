@@ -2,19 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Any
-from dataclasses import MISSING
 from collections import deque
+from dataclasses import MISSING
+from typing import Any
+
 import gymnasium as gym
-import numpy as np
 import torch
-from torchrl.envs.libs.gym import GymWrapper, GymLikeEnv
-from torchrl.envs import Transform
-from torchrl.envs.libs.gym import terminal_obs_reader
-from tensordict import TensorDictBase, TensorDict
+from torchrl.data.tensor_specs import Composite, Unbounded
+from torchrl.envs.libs.gym import GymWrapper, _gym_to_torchrl_spec_transform, terminal_obs_reader
 
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.utils import configclass
+
+
+def _flatten_obs(obs: dict) -> dict:
+    """Flatten one level of nested observation dicts.
+
+    This hoists leaf tensors in grouped observations (for example, ``policy``)
+    into top-level keys when needed.
+    """
+    flat = {}
+    for key, value in obs.items():
+        if isinstance(value, dict):
+            flat.update(value)
+        else:
+            flat[key] = value
+    return flat
 
 
 class IsaacLabWrapper(GymWrapper):
@@ -75,7 +88,11 @@ class IsaacLabWrapper(GymWrapper):
             convert_actions_to_numpy=convert_actions_to_numpy,
             **kwargs,
         )
-        self.log_infos = deque(maxlen=100)
+        self.log_infos = deque()
+
+    @property
+    def _is_batched(self) -> bool:
+        return True
 
     def seed(self, seed: int | None):
         self._set_seed(seed)
@@ -94,25 +111,78 @@ class IsaacLabWrapper(GymWrapper):
         env.autoreset_mode = "SameStep"
         return env
 
-    @property
-    def _is_batched(self) -> bool:
-        return True
+    def _make_specs(self, env: gym.Env, batch_size=None) -> None:  # noqa: F821
+        # Build specs from IsaacLab's unbatched spaces to preserve observation keys.
+        if batch_size is None:
+            batch_size = self.batch_size
+        env_unwrapped = getattr(env, "unwrapped", env)
+
+        action_space = getattr(env_unwrapped, "single_action_space", None)
+        action_needs_batch = action_space is not None
+        action_space = action_space if action_space is not None else env.action_space
+        action_spec = _gym_to_torchrl_spec_transform(
+            action_space,
+            device=self.device,
+            categorical_action_encoding=self._categorical_action_encoding,
+        )
+        if action_needs_batch:
+            action_spec = action_spec.expand(*batch_size, *action_spec.shape)  # type: ignore
+
+        obs_space = getattr(env_unwrapped, "single_observation_space", None)
+        obs_needs_batch = obs_space is not None
+        obs_space = obs_space if obs_space is not None else env.observation_space
+        observation_spec = _gym_to_torchrl_spec_transform(
+            obs_space,
+            device=self.device,
+            categorical_action_encoding=self._categorical_action_encoding,
+        )
+        if obs_needs_batch:
+            observation_spec = observation_spec.expand(*batch_size, *observation_spec.shape)  # type: ignore
+        if not isinstance(observation_spec, Composite):
+            if self.from_pixels:
+                observation_spec = Composite(pixels=observation_spec, shape=batch_size)  # type: ignore
+            else:
+                observation_spec = Composite(observation=observation_spec, shape=batch_size)  # type: ignore
+
+        reward_space = self._reward_space(env)
+        if reward_space is not None:
+            reward_spec = _gym_to_torchrl_spec_transform(
+                reward_space,
+                device=self.device,
+                categorical_action_encoding=self._categorical_action_encoding,
+            )
+        else:
+            reward_spec = Unbounded(shape=[1], device=self.device).expand(*batch_size, 1)  # type: ignore
+        if reward_space is not None:
+            reward_spec = reward_spec.expand(*batch_size, *reward_spec.shape)  # type: ignore
+
+        # Flatten one nested level to keep term keys at top-level TensorDict keys.
+        flat_entries = {}
+        needs_flatten = False
+        for key in list(observation_spec.keys()):
+            child = observation_spec[key]
+            if isinstance(child, Composite):
+                needs_flatten = True
+                for subkey in child.keys():
+                    flat_entries[subkey] = child[subkey]
+            else:
+                flat_entries[key] = child
+        if needs_flatten:
+            observation_spec = Composite(flat_entries, shape=observation_spec.shape)
+
+        self.done_spec = self._make_done_spec()  # type: ignore
+        self.action_spec = action_spec  # type: ignore
+        self.reward_spec = reward_spec  # type: ignore
+        self.observation_spec = observation_spec  # type: ignore
 
     def _output_transform(self, step_outputs_tuple):  # type: ignore
         # IsaacLab will modify the `terminated` and `truncated` tensors
         #  in-place. We clone them here to make sure data doesn't inadvertently get modified.
         # The variable naming follows torchrl's convention here.
         observations, reward, terminated, truncated, info = step_outputs_tuple
-        for k, v in observations.items():
-            if torch.isnan(v).any():
-                # print the first row with nan
-                print(
-                    f"NaN values found in observation {k} during step. First row: {v[0]}"
-                )
-                raise ValueError(
-                    f"NaN values found in observation {k} during step. "
-                    "This is likely due to an error in the environment or the model."
-                )
+        if isinstance(info, dict) and "log" in info:
+            self.log_infos.append(info["log"])
+
         if torch.isnan(reward).any():
             raise ValueError(
                 "NaN values found in reward during step. "
@@ -120,16 +190,12 @@ class IsaacLabWrapper(GymWrapper):
             )
 
         done = terminated | truncated
-        reward = (
-            reward.clone().unsqueeze(-1).to(dtype=torch.float32)
-        )  # to get to (num_envs, 1)
+        reward = reward.clone().unsqueeze(-1).to(dtype=torch.float32)  # to get to (num_envs, 1)
+        observations = _flatten_obs(CloneObsBuf(observations))
 
-        self.log_infos.append(info["log"])
-
-        observations = CloneObsBuf(observations)
-
-        if "final_obs_buf" in info:
-            info = {"final_obs_buf": CloneObsBuf(info["final_obs_buf"])}
+        # IsaacLab emits Gymnasium-style keys: final_obs / final_info.
+        if isinstance(info, dict) and "final_obs" in info:
+            info = {"final_obs": info["final_obs"]}
             return (
                 observations,
                 reward,
@@ -151,7 +217,7 @@ class IsaacLabWrapper(GymWrapper):
     def _reset_output_transform(self, reset_data):
         """Transform the output of the reset method."""
         observations, info = reset_data
-        return (CloneObsBuf(observations), {})
+        return (_flatten_obs(CloneObsBuf(observations)), {})
 
 
 def CloneObsBuf(
@@ -180,49 +246,67 @@ def CloneObsBuf(
     return cloned
 
 
+def CheckObsBufForNaN(obs_buf: dict[str, torch.Tensor | dict], prefix: str = "") -> None:
+    """Recursively check nested observation dicts for NaNs."""
+    for key, value in obs_buf.items():
+        name = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            CheckObsBufForNaN(value, name)
+        elif isinstance(value, torch.Tensor) and torch.isnan(value).any():
+            first_row = value[0] if value.ndim > 0 else value
+            print(f"NaN values found in observation {name} during step. First row: {first_row}")
+            raise ValueError(
+                f"NaN values found in observation {name} during step. "
+                "This is likely due to an error in the environment or the model."
+            )
+
+
 class IsaacLabTerminalObsReader(terminal_obs_reader):
     """A terminal observation reader for IsaacLab environments.
 
     This reader extracts the terminal observation from the environment's info dictionary.
     It is used to read the terminal observation when the environment is reset."""
 
+    def __init__(self, observation_spec: Composite, backend, name: str = "final"):
+        super().__init__(observation_spec=observation_spec, backend=backend, name=name)
+        # Provide info specs upfront to avoid dummy rollouts in set_info_dict_reader.
+        self._info_spec = Composite({self.name: observation_spec.clone()}, shape=[])
+
     def __call__(self, info_dict, tensordict):
-        """Read the terminal observation from the info dictionary and update the tensordict.
+        # IsaacLab: info_dict["final_obs"] is np.ndarray(num_envs, dtype=object);
+        # each entry is None or a nested dict produced by _slice_obs.
+        # We flatten exactly like _flatten_obs so keys match the flattened spec.
+        backend_key = self.backend_key[self.backend]
+        final_obs_arr = info_dict.pop(backend_key, None)
+        info_dict.pop(self.backend_info_key[self.backend], None)
 
-        Args:
-            info_dict (dict): The info dictionary from the environment.
-            tensordict (TensorDictBase): The tensordict to update with the terminal observation.
-        Returns:
-            TensorDictBase: The updated tensordict with the terminal observation.
-        """
-        # convert info_dict to a tensordict
-        info_dict = TensorDict(info_dict)
-        # get the terminal observation
-        terminal_obs = info_dict.pop("final_obs_buf", None)
-
-        # get the terminal info dict
-        terminal_info = info_dict.pop(self.backend_info_key[self.backend], None)
-
-        if terminal_info is None:
-            terminal_info = {}
-
+        # Let the parent handle remaining info entries and validation.
         super().__call__(info_dict, tensordict)
         if not self._final_validated:
             self.info_spec[self.name] = self._obs_spec.update(self.info_spec)
             self._final_validated = True
-        final_info = terminal_info.copy()
-        if terminal_obs is not None:
-            final_info["observation"] = terminal_obs
+
+        # Flatten per-env dicts once, then scatter into batched zero buffers.
+        num_envs = len(final_obs_arr) if final_obs_arr is not None else 0
+        flat_per_env: list[dict | None] = [None] * num_envs
+        for i in range(num_envs):
+            if final_obs_arr[i] is not None:
+                flat_per_env[i] = _flatten_obs(final_obs_arr[i])
 
         for key in self.info_spec[self.name].keys():
-            tensordict.set(
-                (self.name, key),
-                (
-                    terminal_obs[key]
-                    if terminal_obs is not None
-                    else self.info_spec[self.name, key].zero()
-                ),
-            )
+            spec = self.info_spec[self.name, key]
+            buffer = spec.zero()
+            device = buffer.device
+            for i in range(num_envs):
+                flat = flat_per_env[i]
+                if flat is None or key not in flat:
+                    continue
+                value = flat[key]
+                if isinstance(value, torch.Tensor):
+                    buffer[i] = value.to(device=device)
+                else:
+                    buffer[i] = torch.as_tensor(value, device=device)
+            tensordict.set((self.name, key), buffer)
         return tensordict
 
 
