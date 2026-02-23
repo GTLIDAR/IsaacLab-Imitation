@@ -17,6 +17,16 @@ from isaaclab.utils.math import (
 )
 
 
+@torch.compile
+def _rms_error(actual: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return torch.sqrt(torch.mean((actual - target) ** 2, dim=1))
+
+
+@torch.compile
+def _xy_error_norm(actual_xy: torch.Tensor, target_xy: torch.Tensor) -> torch.Tensor:
+    return torch.sqrt(torch.sum((actual_xy - target_xy) ** 2, dim=1))
+
+
 def reference_joint_pos_deviation_too_much(
     env: ImitationRLEnv,
     threshold: float = 0.75,
@@ -26,7 +36,7 @@ def reference_joint_pos_deviation_too_much(
     asset: Articulation = env.scene[asset_cfg.name]
     joint_pos_actual = asset.data.joint_pos[:, asset_cfg.joint_ids]
     joint_pos_reference = env.get_reference_data(key="joint_pos", joint_indices=asset_cfg.joint_ids)
-    rms_joint_error = torch.sqrt(torch.mean((joint_pos_actual - joint_pos_reference) ** 2, dim=1))
+    rms_joint_error = _rms_error(joint_pos_actual, joint_pos_reference)
     return rms_joint_error > threshold
 
 
@@ -43,7 +53,7 @@ def reference_root_position_xy_deviation_too_much(
     root_pos_reference = env.get_reference_data(key="root_pos")
     root_pos_reference = quat_apply(align_quat, root_pos_reference) + align_pos
 
-    xy_error = torch.linalg.norm(root_pos_actual[:, :2] - root_pos_reference[:, :2], dim=1)
+    xy_error = _xy_error_norm(root_pos_actual[:, :2], root_pos_reference[:, :2])
     return xy_error > threshold
 
 
@@ -86,10 +96,34 @@ def _resolve_reference_body_indices(
 ) -> torch.Tensor:
     """Map reference body names to indices in replay metadata."""
     all_reference_body_names = getattr(env, "reference_body_names", None) or []
+
+    def _has_only_generic_body_names(names: Sequence[str]) -> bool:
+        return len(names) > 0 and all(name.startswith("body_") and name[5:].isdigit() for name in names)
+
+    # iltools loaders may emit body_0...body_N metadata. If body counts match the robot,
+    # use robot body names to keep index-wise alignment and avoid name lookup failures.
+    if len(all_reference_body_names) == 0 or _has_only_generic_body_names(all_reference_body_names):
+        try:
+            asset: Articulation = env.scene["robot"]
+            robot_body_names = list(asset.body_names)
+            ref_body_pos = env.current_reference.get("xpos")
+            if ref_body_pos is None:
+                ref_body_pos = env.current_reference.get("body_pos_w")
+            if ref_body_pos is not None and ref_body_pos.ndim >= 3 and int(ref_body_pos.shape[1]) == len(robot_body_names):
+                if all_reference_body_names != robot_body_names:
+                    env.reference_body_names = list(robot_body_names)
+                    if hasattr(env, "_reference_body_index_cache"):
+                        env._reference_body_index_cache = {}  # type: ignore[attr-defined]
+                all_reference_body_names = robot_body_names
+        except Exception:
+            # Fall back to metadata-driven lookup below.
+            pass
+
     if len(all_reference_body_names) == 0:
         raise RuntimeError(
             "Reference body names are unavailable in the environment metadata. "
-            "Ensure dataset zarr metadata contains `body_names`."
+            "Ensure dataset zarr metadata contains `body_names` or that reference body "
+            "count matches robot body count for automatic fallback."
         )
 
     if not hasattr(env, "_reference_body_index_cache"):
@@ -136,7 +170,7 @@ def bad_anchor_pos_z_only(
     """Terminate when anchor z-tracking error exceeds threshold."""
     asset: Articulation = env.scene[asset_cfg.name]
     anchor_idx = asset.body_names.index(anchor_body_name)
-    robot_anchor_pos_w = asset.data.body_link_pos_w[:, anchor_idx]
+    robot_anchor_pos_w = asset.data.body_pos_w[:, anchor_idx]
 
     ref_anchor_id = _resolve_reference_body_indices(env, [anchor_body_name], robot_anchor_pos_w.device)
     ref_anchor_pos = env.get_reference_data(key="xpos")[..., ref_anchor_id, :][:, 0, :]
@@ -154,7 +188,7 @@ def bad_anchor_ori(
     """Terminate when anchor orientation mismatch exceeds threshold."""
     asset: Articulation = env.scene[asset_cfg.name]
     anchor_idx = asset.body_names.index(anchor_body_name)
-    robot_anchor_quat_w = asset.data.body_link_quat_w[:, anchor_idx]
+    robot_anchor_quat_w = asset.data.body_quat_w[:, anchor_idx]
 
     ref_anchor_id = _resolve_reference_body_indices(env, [anchor_body_name], robot_anchor_quat_w.device)
     ref_anchor_quat = env.get_reference_data(key="xquat")[..., ref_anchor_id, :][:, 0, :]
@@ -174,7 +208,7 @@ def bad_reference_body_pos_z_only(
 ) -> torch.Tensor:
     """Terminate when any selected body z error to reference exceeds threshold."""
     asset: Articulation = env.scene[asset_cfg.name]
-    body_ids = torch.as_tensor(asset_cfg.body_ids, dtype=torch.long, device=asset.data.body_link_pos_w.device)
+    body_ids = torch.as_tensor(asset_cfg.body_ids, dtype=torch.long, device=asset.data.body_pos_w.device)
     if len(reference_body_names) != int(body_ids.numel()):
         raise ValueError("reference_body_names must match the number of selected body names.")
 
@@ -187,6 +221,6 @@ def bad_reference_body_pos_z_only(
     ref_pos_w = quat_apply(align_quat_expand, ref_pos.reshape(-1, 3)).reshape(num_envs, num_bodies, 3)
     ref_pos_w = ref_pos_w + align_pos.unsqueeze(1)
 
-    body_pos_actual = asset.data.body_link_pos_w[:, body_ids, :]
+    body_pos_actual = asset.data.body_pos_w[:, body_ids, :]
     z_error = torch.abs(ref_pos_w[..., 2] - body_pos_actual[..., 2])
     return torch.any(z_error > threshold, dim=-1)

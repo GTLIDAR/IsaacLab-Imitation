@@ -63,8 +63,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
     def __init__(self, cfg: Any, render_mode: str | None = None, **kwargs: Any) -> None:
         """Initialize the simplified ImitationRLEnv."""
-        print(f"[ImitationRLEnv] Starting initialization with num_envs={cfg.scene.num_envs}")
-
         # Get device
         device = cfg.sim.device
         num_envs = cfg.scene.num_envs
@@ -94,7 +92,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                         "so the zarr dataset can be rebuilt."
                     )
                 if zarr_path.exists():
-                    print(f"[ImitationRLEnv] refresh_zarr_dataset=True, removing existing zarr at {zarr_path}...")
                     if zarr_path.is_dir():
                         shutil.rmtree(zarr_path)
                     else:
@@ -102,12 +99,10 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
             # If zarr doesn't exist and loader is provided, create it
             if not zarr_path.exists() and loader_type is not None:
-                print(f"[ImitationRLEnv] Zarr not found at {zarr_path}, creating with {loader_type} loader...")
                 if loader_type == "loco_mujoco":
                     from omegaconf import DictConfig
 
                     loader_cfg = DictConfig(loader_kwargs)
-                    print(f"[ImitationRLEnv] Loader cfg: {loader_cfg}")
                     _ = LocoMuJoCoLoader(
                         env_name=loader_kwargs["env_name"],
                         cfg=loader_cfg,
@@ -118,7 +113,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                     from omegaconf import DictConfig
 
                     loader_cfg = DictConfig(loader_kwargs)
-                    print(f"[ImitationRLEnv] Loader cfg: {loader_cfg}")
                     _ = Lafan1CsvLoader(
                         cfg=loader_cfg,
                         build_zarr_dataset=True,
@@ -129,10 +123,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                         f"Unsupported loader_type: {loader_type}. "
                         "Supported loader types: loco_mujoco, lafan1_csv, lafan1."
                     )
-                print(f"[ImitationRLEnv] Zarr created at {zarr_path}")
 
             # Load replay buffer from Zarr
-            print(f"[ImitationRLEnv] Loading replay buffer from {zarr_path}...")
             datasets = getattr(cfg, "datasets", None)
             motions = getattr(cfg, "motions", None)
             traj_names = getattr(cfg, "trajectories", None)
@@ -164,13 +156,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 "round_robin": ResetSchedule.ROUND_ROBIN,
             }
             reset_schedule = mapping.get(assignment_strategy, ResetSchedule.RANDOM)
-            print(
-                f"[ImitationRLEnv] Mapped assignment_strategy='{assignment_strategy}' "
-                f"to reset_schedule='{reset_schedule}'"
-            )
         if reset_schedule is None:
             reset_schedule = ResetSchedule.RANDOM
-        print(f"[ImitationRLEnv] Reset schedule: {reset_schedule}")
         # Get other config options
         wrap_steps = getattr(cfg, "wrap_steps", False)
         reference_start_frame = int(getattr(cfg, "reference_start_frame", 0))
@@ -182,16 +169,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if len(dataset_joint_names) > 0:
             if len(reference_joint_names) == 0:
                 reference_joint_names = dataset_joint_names
-                print(
-                    f"[ImitationRLEnv] Using {len(reference_joint_names)} reference joints from zarr metadata."
-                )
             elif len(reference_joint_names) != len(dataset_joint_names):
-                print(
-                    "[ImitationRLEnv] Config reference_joint_names length "
-                    f"({len(reference_joint_names)}) does not match zarr metadata "
-                    f"({len(dataset_joint_names)}). Overriding with zarr metadata to prevent "
-                    "reference indexing mismatch."
-                )
                 reference_joint_names = dataset_joint_names
 
         first_qpos = rb[0].get("qpos")
@@ -248,7 +226,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self.replay_only = getattr(cfg, "replay_only", False)
         if self.replay_only and not self.replay_reference:
             self.replay_reference = True
-            print("[ImitationRLEnv] replay_only enabled; forcing replay_reference=True.")
 
         # Store initial poses for replay
         self._init_root_pos = torch.zeros((num_envs, 3), device=device)
@@ -274,10 +251,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._finalize_reference_body_names()
         self._setup_reference_velocity_visualizer()
         self._update_reference_velocity_visualizer()
-        joint_names = self.robot.joint_names
-        print("[ImitationRLEnv] G1 Joint names: ", joint_names)
-
-        print("[ImitationRLEnv] Initialization complete")
 
     @staticmethod
     def _read_reference_joint_names_from_zarr(zarr_path: Path) -> list[str]:
@@ -302,8 +275,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         """Load reference body/site names from zarr metadata if available."""
         try:
             root = zarr.open(str(zarr_path), mode="r")
-        except Exception as exc:
-            print(f"[ImitationRLEnv] Could not open zarr metadata at {zarr_path}: {exc}")
+        except Exception:
             return
 
         dataset_group = None
@@ -318,17 +290,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             dataset_group = None
 
         if dataset_group is None:
-            print("[ImitationRLEnv] No dataset group with body/site metadata found in zarr.")
             return
 
         body_names = dataset_group.attrs.get("body_names", [])
         site_names = dataset_group.attrs.get("site_names", [])
         self.reference_body_names = list(body_names) if body_names is not None else []
         self.reference_site_names = list(site_names) if site_names is not None else []
-        print(
-            f"[ImitationRLEnv] Loaded reference metadata: {len(self.reference_body_names)} bodies,"
-            f" {len(self.reference_site_names)} sites"
-        )
 
     def _finalize_reference_body_names(self) -> None:
         """Improve reference body-name mapping for datasets that only provide generic names."""
@@ -347,10 +314,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         )
         if has_generic_names and num_reference_bodies == len(robot_body_names):
             self.reference_body_names = robot_body_names
-            print(
-                "[ImitationRLEnv] Reference body names were missing/generic. "
-                "Using robot body names for reference-body matching."
-            )
 
     @staticmethod
     def _normalize_body_name_for_matching(name: str) -> str:
@@ -363,7 +326,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
     def _resolve_reference_body_visualization_pairs(self) -> tuple[torch.Tensor, torch.Tensor, list[str]] | None:
         """Resolve pairs of (reference body idx, robot body idx) to visualize."""
         if len(self.reference_body_names) == 0:
-            print("[ImitationRLEnv] Skipping body visualization: no reference body metadata.")
             return None
 
         reference_body_pos = None
@@ -374,7 +336,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         except KeyError:
             pass
         if reference_body_pos is None or reference_body_quat is None:
-            print("[ImitationRLEnv] Skipping body visualization: reference keys `xpos`/`xquat` are unavailable.")
             return None
 
         robot_body_names = list(self.robot.body_names)
@@ -391,7 +352,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         selected_ref_ids: list[int] = []
         selected_robot_ids: list[int] = []
         selected_names: list[str] = []
-        unresolved_names: list[str] = []
         used_robot_ids: set[int] = set()
 
         for ref_id, ref_body_name in enumerate(self.reference_body_names):
@@ -419,7 +379,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                             robot_id = prefix_matches[0]
 
             if robot_id is None:
-                unresolved_names.append(ref_body_name)
                 continue
             if robot_id in used_robot_ids:
                 continue
@@ -430,18 +389,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             selected_names.append(ref_body_name)
 
         if len(selected_ref_ids) == 0:
-            print("[ImitationRLEnv] Skipping body visualization: could not match reference bodies to robot bodies.")
             return None
-
-        if len(unresolved_names) > 0:
-            print(
-                f"[ImitationRLEnv] Body visualization: unmatched reference bodies (first 10): {unresolved_names[:10]}"
-            )
-
-        print(
-            f"[ImitationRLEnv] Body visualization: matched {len(selected_ref_ids)}/{len(self.reference_body_names)}"
-            " reference bodies."
-        )
         return (
             torch.tensor(selected_ref_ids, dtype=torch.long, device=self.device),
             torch.tensor(selected_robot_ids, dtype=torch.long, device=self.device),
@@ -560,9 +508,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self.action_manager.process_action(action.to(self.device))
         self.recorder_manager.record_pre_step()
 
-        # Advance and replay the next reference frame.
-        self.current_reference = self.trajectory_manager.sample(advance=True)
-        self._replay_reference(reference=self.current_reference)
+        # Sample the current reference frame and advance the internal step by exactly one.
+        # `sample(advance=True)` returns frame t and then increments to t+1.
+        # This avoids double-advance while keeping reward computation aligned with frame t.
+        reference_for_step = self.trajectory_manager.sample(advance=True)
+        self.current_reference = reference_for_step
+        self._replay_reference(reference=reference_for_step)
         self.scene.update(dt=0.0)
 
         # post-step:
@@ -627,6 +578,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # -- step interval events
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
+        # Expose post-step reference (frame t+1) for observations/outputs, matching
+        # ManagerBasedRLEnv command timing after command_manager.compute().
+        self.current_reference = self.trajectory_manager.sample(advance=False)
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs
         self.obs_buf = self.observation_manager.compute(update_history=True)
@@ -844,11 +798,23 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             and len(self._goal_body_frame_markers) == len(self._current_body_frame_markers)
             and len(self._goal_body_frame_markers) > 0
         ):
-            reference_body_pos = self.current_reference.get("xpos")
-            reference_body_quat = self.current_reference.get("xquat")
-            if reference_body_pos is not None and reference_body_quat is not None:
+            reference_body_pos = None
+            reference_body_quat = None
+            try:
+                reference_body_pos = self.get_reference_data("xpos")
+                reference_body_quat = self.get_reference_data("xquat")
+            except KeyError:
+                pass
+
+            if reference_body_pos is not None:
                 ref_body_pos = reference_body_pos[..., self._vis_reference_body_ids, :]
-                ref_body_quat = reference_body_quat[..., self._vis_reference_body_ids, :]
+                if reference_body_quat is not None:
+                    ref_body_quat = reference_body_quat[..., self._vis_reference_body_ids, :]
+                else:
+                    # Keep position-only visualization alive when orientation keys are unavailable.
+                    ref_body_quat = torch.zeros((*ref_body_pos.shape[:-1], 4), device=ref_body_pos.device)
+                    ref_body_quat[..., 0] = 1.0
+
                 ref_body_pos_w, ref_body_quat_w_opt = self._transform_reference_body_pose_to_init_alignment(
                     ref_body_pos, ref_body_quat
                 )

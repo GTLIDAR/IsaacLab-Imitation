@@ -13,6 +13,28 @@ from isaaclab.utils.math import (
 )
 
 
+@torch.compile
+def _quat_to_rot6d_flat(quat: torch.Tensor) -> torch.Tensor:
+    quat_mat = matrix_from_quat(quat)
+    return quat_mat[..., :2].reshape(quat_mat.shape[0], -1)
+
+
+@torch.compile
+def _body_pose_in_anchor_frame(
+    anchor_pos_w: torch.Tensor,
+    anchor_quat_w: torch.Tensor,
+    body_pos_w: torch.Tensor,
+    body_quat_w: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    num_bodies = body_pos_w.shape[1]
+    return subtract_frame_transforms(
+        anchor_pos_w[:, None, :].expand(-1, num_bodies, -1),
+        anchor_quat_w[:, None, :].expand(-1, num_bodies, -1),
+        body_pos_w,
+        body_quat_w,
+    )
+
+
 def reference_joint_pos(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -88,10 +110,34 @@ def _resolve_reference_body_indices(
 ) -> torch.Tensor:
     """Map reference body names to indices in replay metadata."""
     all_reference_body_names = getattr(env, "reference_body_names", None) or []
+
+    def _has_only_generic_body_names(names: Sequence[str]) -> bool:
+        return len(names) > 0 and all(name.startswith("body_") and name[5:].isdigit() for name in names)
+
+    # iltools loaders may emit body_0...body_N metadata. If body counts match the robot,
+    # use robot body names to keep index-wise alignment and avoid name lookup failures.
+    if len(all_reference_body_names) == 0 or _has_only_generic_body_names(all_reference_body_names):
+        try:
+            asset: Articulation = env.scene["robot"]
+            robot_body_names = list(asset.body_names)
+            ref_body_pos = env.current_reference.get("xpos")
+            if ref_body_pos is None:
+                ref_body_pos = env.current_reference.get("body_pos_w")
+            if ref_body_pos is not None and ref_body_pos.ndim >= 3 and int(ref_body_pos.shape[1]) == len(robot_body_names):
+                if all_reference_body_names != robot_body_names:
+                    env.reference_body_names = list(robot_body_names)
+                    if hasattr(env, "_reference_body_index_cache"):
+                        env._reference_body_index_cache = {}  # type: ignore[attr-defined]
+                all_reference_body_names = robot_body_names
+        except Exception:
+            # Fall back to metadata-driven lookup below.
+            pass
+
     if len(all_reference_body_names) == 0:
         raise RuntimeError(
             "Reference body names are unavailable in the environment metadata. "
-            "Ensure dataset zarr metadata contains `body_names`."
+            "Ensure dataset zarr metadata contains `body_names` or that reference body "
+            "count matches robot body count for automatic fallback."
         )
 
     if not hasattr(env, "_reference_body_index_cache"):
@@ -137,11 +183,8 @@ def _reference_body_pose_w(
     ref_body_ids = _resolve_reference_body_indices(env, reference_body_names, device)
     ref_pos = env.get_reference_data(key="xpos")[..., ref_body_ids, :]
     ref_quat = env.get_reference_data(key="xquat")[..., ref_body_ids, :]
-    ref_pos_w, ref_quat_w_opt = env._transform_reference_pose_to_world(ref_pos, ref_quat)
-    if ref_quat_w_opt is None:
-        raise RuntimeError("Failed to transform reference body quaternions.")
-    ref_quat_w = ref_quat_w_opt
-    return ref_pos_w, ref_quat_w
+    ref_pos_w, ref_quat_w = env._transform_reference_pose_to_world(ref_pos, ref_quat)
+    return ref_pos_w, ref_quat_w  # type: ignore[return-value]
 
 
 def reference_motion_command(
@@ -161,8 +204,8 @@ def reference_anchor_pos_b(
     """Reference anchor position expressed in the robot-anchor frame."""
     asset: Articulation = env.scene[asset_cfg.name]
     anchor_body_idx = asset.body_names.index(anchor_body_name)
-    robot_anchor_pos_w = asset.data.body_link_pos_w[:, anchor_body_idx]
-    robot_anchor_quat_w = asset.data.body_link_quat_w[:, anchor_body_idx]
+    robot_anchor_pos_w = asset.data.body_pos_w[:, anchor_body_idx]
+    robot_anchor_quat_w = asset.data.body_quat_w[:, anchor_body_idx]
 
     ref_anchor_pos_w, ref_anchor_quat_w = _reference_body_pose_w(env, [anchor_body_name])
     ref_anchor_pos_w = ref_anchor_pos_w[:, 0, :]
@@ -182,18 +225,15 @@ def reference_anchor_ori_b(
     """Reference anchor orientation expressed in the robot-anchor frame."""
     asset: Articulation = env.scene[asset_cfg.name]
     anchor_body_idx = asset.body_names.index(anchor_body_name)
-    robot_anchor_pos_w = asset.data.body_link_pos_w[:, anchor_body_idx]
-    robot_anchor_quat_w = asset.data.body_link_quat_w[:, anchor_body_idx]
+    robot_anchor_pos_w = asset.data.body_pos_w[:, anchor_body_idx]
+    robot_anchor_quat_w = asset.data.body_quat_w[:, anchor_body_idx]
 
     ref_anchor_pos_w, ref_anchor_quat_w = _reference_body_pose_w(env, [anchor_body_name])
     ref_anchor_pos_w = ref_anchor_pos_w[:, 0, :]
     ref_anchor_quat_w = ref_anchor_quat_w[:, 0, :]
 
-    _, anchor_ori_b = subtract_frame_transforms(
-        robot_anchor_pos_w, robot_anchor_quat_w, ref_anchor_pos_w, ref_anchor_quat_w
-    )
-    anchor_ori_b_mat = matrix_from_quat(anchor_ori_b)
-    return anchor_ori_b_mat[..., :2].reshape(anchor_ori_b_mat.shape[0], -1)
+    _, anchor_ori_b = subtract_frame_transforms(robot_anchor_pos_w, robot_anchor_quat_w, ref_anchor_pos_w, ref_anchor_quat_w)
+    return _quat_to_rot6d_flat(anchor_ori_b)
 
 
 def robot_body_pos_b(
@@ -204,19 +244,12 @@ def robot_body_pos_b(
     """Robot body positions in the robot-anchor frame."""
     asset: Articulation = env.scene[asset_cfg.name]
     anchor_body_idx = asset.body_names.index(anchor_body_name)
-    robot_anchor_pos_w = asset.data.body_link_pos_w[:, anchor_body_idx]
-    robot_anchor_quat_w = asset.data.body_link_quat_w[:, anchor_body_idx]
+    robot_anchor_pos_w = asset.data.body_pos_w[:, anchor_body_idx]
+    robot_anchor_quat_w = asset.data.body_quat_w[:, anchor_body_idx]
 
-    body_pos_w = asset.data.body_link_pos_w[:, asset_cfg.body_ids]
-    body_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids]
-    num_bodies = body_pos_w.shape[1]
-
-    body_pos_b, _ = subtract_frame_transforms(
-        robot_anchor_pos_w[:, None, :].repeat(1, num_bodies, 1),
-        robot_anchor_quat_w[:, None, :].repeat(1, num_bodies, 1),
-        body_pos_w,
-        body_quat_w,
-    )
+    body_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    body_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    body_pos_b, _ = _body_pose_in_anchor_frame(robot_anchor_pos_w, robot_anchor_quat_w, body_pos_w, body_quat_w)
     return body_pos_b.reshape(env.num_envs, -1)
 
 
@@ -228,18 +261,10 @@ def robot_body_ori_b(
     """Robot body orientations in the robot-anchor frame."""
     asset: Articulation = env.scene[asset_cfg.name]
     anchor_body_idx = asset.body_names.index(anchor_body_name)
-    robot_anchor_pos_w = asset.data.body_link_pos_w[:, anchor_body_idx]
-    robot_anchor_quat_w = asset.data.body_link_quat_w[:, anchor_body_idx]
+    robot_anchor_pos_w = asset.data.body_pos_w[:, anchor_body_idx]
+    robot_anchor_quat_w = asset.data.body_quat_w[:, anchor_body_idx]
 
-    body_pos_w = asset.data.body_link_pos_w[:, asset_cfg.body_ids]
-    body_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids]
-    num_bodies = body_pos_w.shape[1]
-
-    _, body_ori_b = subtract_frame_transforms(
-        robot_anchor_pos_w[:, None, :].repeat(1, num_bodies, 1),
-        robot_anchor_quat_w[:, None, :].repeat(1, num_bodies, 1),
-        body_pos_w,
-        body_quat_w,
-    )
-    body_ori_b_mat = matrix_from_quat(body_ori_b)
-    return body_ori_b_mat[..., :2].reshape(body_ori_b_mat.shape[0], -1)
+    body_pos_w = asset.data.body_pos_w[:, asset_cfg.body_ids]
+    body_quat_w = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    _, body_ori_b = _body_pose_in_anchor_frame(robot_anchor_pos_w, robot_anchor_quat_w, body_pos_w, body_quat_w)
+    return _quat_to_rot6d_flat(body_ori_b)

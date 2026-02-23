@@ -15,20 +15,55 @@ from isaaclab.app import AppLauncher
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 # add argparse arguments
-parser = argparse.ArgumentParser(description="Train an RL agent with Stable-Baselines3.")
-parser.add_argument("--video", action="store_true", default=False, help="Record videos during training.")
-parser.add_argument("--video_length", type=int, default=200, help="Length of the recorded video (in steps).")
-parser.add_argument("--video_interval", type=int, default=2000, help="Interval between video recordings (in steps).")
-parser.add_argument("--num_envs", type=int, default=None, help="Number of environments to simulate.")
+parser = argparse.ArgumentParser(
+    description="Train an RL agent with Stable-Baselines3."
+)
+parser.add_argument(
+    "--video", action="store_true", default=False, help="Record videos during training."
+)
+parser.add_argument(
+    "--video_length",
+    type=int,
+    default=200,
+    help="Length of the recorded video (in steps).",
+)
+parser.add_argument(
+    "--video_interval",
+    type=int,
+    default=2000,
+    help="Interval between video recordings (in steps).",
+)
+parser.add_argument(
+    "--num_envs", type=int, default=None, help="Number of environments to simulate."
+)
 parser.add_argument("--task", type=str, default=None, help="Name of the task.")
 parser.add_argument(
-    "--agent", type=str, default="rlopt_cfg_entry_point", help="Name of the RL agent configuration entry point."
+    "--agent",
+    type=str,
+    default="rlopt_cfg_entry_point",
+    help="Name of the RL agent configuration entry point.",
 )
-parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
-parser.add_argument("--log_interval", type=int, default=100_000, help="Log data every n timesteps.")
-parser.add_argument("--checkpoint", type=str, default=None, help="Continue the training from checkpoint.")
-parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
-parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
+parser.add_argument(
+    "--seed", type=int, default=None, help="Seed used for the environment"
+)
+parser.add_argument(
+    "--log_interval", type=int, default=100_000, help="Log data every n timesteps."
+)
+parser.add_argument(
+    "--checkpoint",
+    type=str,
+    default=None,
+    help="Continue the training from checkpoint.",
+)
+parser.add_argument(
+    "--max_iterations", type=int, default=None, help="RL Policy training iterations."
+)
+parser.add_argument(
+    "--export_io_descriptors",
+    action="store_true",
+    default=False,
+    help="Export IO descriptors.",
+)
 parser.add_argument(
     "--algo",
     "--algorithm",
@@ -40,7 +75,11 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
+    "--ray-proc-id",
+    "-rid",
+    type=int,
+    default=None,
+    help="Automatically configured by Ray integration, otherwise None.",
 )
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
@@ -109,7 +148,7 @@ from isaaclab_imitation.envs.torchrl import IsaacLabTerminalObsReader, IsaacLabW
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
-import IsaacLabImitation.tasks  # noqa: F401
+import isaaclab_imitation.tasks  # noqa: F401
 
 torch.set_float32_matmul_precision("high")
 
@@ -124,7 +163,9 @@ ALGORITHM_CLASS_MAP = {
 }
 
 
-def resolve_agent_cfg_entry_point(task_name: str | None, agent_entry_point: str, algorithm: str) -> str:
+def resolve_agent_cfg_entry_point(
+    task_name: str | None, agent_entry_point: str, algorithm: str
+) -> str:
     """Resolve the agent config entry point based on algorithm and task registry."""
     if agent_entry_point != "rlopt_cfg_entry_point" or task_name is None:
         return agent_entry_point
@@ -149,35 +190,48 @@ def resolve_agent_cfg_entry_point(task_name: str | None, agent_entry_point: str,
     return agent_entry_point
 
 
-args_cli.agent = resolve_agent_cfg_entry_point(args_cli.task, args_cli.agent, args_cli.algorithm)
+args_cli.agent = resolve_agent_cfg_entry_point(
+    args_cli.task, args_cli.agent, args_cli.algorithm
+)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
-def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agent_cfg: RLOptConfig):
+def main(
+    env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg,
+    agent_cfg: RLOptConfig,
+):
     """Train with stable-baselines agent."""
     # randomly sample a seed if seed = -1
     if args_cli.seed == -1:
         args_cli.seed = random.randint(0, 10000)
 
     # override configurations with non-hydra CLI arguments
-    env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    env_cfg.scene.num_envs = (
+        args_cli.num_envs if args_cli.num_envs is not None else env_cfg.scene.num_envs
+    )
     agent_cfg.env.num_envs = env_cfg.scene.num_envs
     agent_cfg.env.env_name = args_cli.task
     agent_cfg.seed = args_cli.seed if args_cli.seed is not None else agent_cfg.seed
     # max iterations for training
     if args_cli.max_iterations is not None:
         agent_cfg.collector.total_frames = (
-            args_cli.max_iterations * agent_cfg.collector.total_frames * env_cfg.scene.num_envs
+            args_cli.max_iterations
+            * agent_cfg.collector.total_frames
+            * env_cfg.scene.num_envs
         )
     agent_cfg.collector.frames_per_batch *= env_cfg.scene.num_envs
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
-    env_cfg.sim.device = args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    env_cfg.sim.device = (
+        args_cli.device if args_cli.device is not None else env_cfg.sim.device
+    )
 
     # directory for logging into
     run_info = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_root_path = os.path.abspath(os.path.join("logs", "rlopt", args_cli.algorithm.lower(), args_cli.task))
+    log_root_path = os.path.abspath(
+        os.path.join("logs", "rlopt", args_cli.algorithm.lower(), args_cli.task)
+    )
     print(f"[INFO] Logging experiment in directory: {log_root_path}")
     # The Ray Tune workflow extracts experiment name using the logging line below, hence,
     # do not change it (see PR #2346, comment-2819298849)
@@ -212,11 +266,15 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         policy_in_keys = ["policy"]
 
     # create isaac environment
-    env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    env = gym.make(
+        args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None
+    )
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
-        raise NotImplementedError("DirectMARLEnv is not supported for RLOpt training yet.")
+        raise NotImplementedError(
+            "DirectMARLEnv is not supported for RLOpt training yet."
+        )
 
     # wrap for video recording
     if args_cli.video:
@@ -234,7 +292,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     env = IsaacLabWrapper(env)  # type: ignore
     env = env.set_info_dict_reader(
-        IsaacLabTerminalObsReader(observation_spec=env.observation_spec, backend="gymnasium")  # type: ignore
+        IsaacLabTerminalObsReader(
+            observation_spec=env.observation_spec, backend="gymnasium"
+        )  # type: ignore
     )
     env = TransformedEnv(
         env=env,

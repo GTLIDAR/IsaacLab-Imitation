@@ -6,8 +6,8 @@
 import copy
 import hashlib
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -191,7 +191,9 @@ def _read_npz_fps(npz_path: Path) -> float | None:
         return None
 
 
-def _normalize_lafan1_motion_entries(entries_like: Any, default_input_fps: float = 60.0) -> list[dict[str, Any]]:
+def _normalize_lafan1_motion_entries(
+    entries_like: Any, default_input_fps: float = 60.0
+) -> list[dict[str, Any]]:
     """Normalize manifest/json data into iltools lafan1_csv entry dicts."""
 
     def _as_list(value: Any) -> list[Any]:
@@ -201,11 +203,17 @@ def _normalize_lafan1_motion_entries(entries_like: Any, default_input_fps: float
             return value
         return [value]
 
-    def _normalize_one(entry_like: Any, fallback_name: str | None = None) -> dict[str, Any]:
+    def _normalize_one(
+        entry_like: Any, fallback_name: str | None = None
+    ) -> dict[str, Any]:
         if isinstance(entry_like, str):
             path_obj = Path(entry_like).expanduser().resolve()
             name = fallback_name or path_obj.stem
-            return {"name": name, "path": str(path_obj), "input_fps": float(default_input_fps)}
+            return {
+                "name": name,
+                "path": str(path_obj),
+                "input_fps": float(default_input_fps),
+            }
 
         if not isinstance(entry_like, dict):
             raise ValueError(f"Unsupported motion entry type: {type(entry_like)}")
@@ -223,9 +231,13 @@ def _normalize_lafan1_motion_entries(entries_like: Any, default_input_fps: float
 
     if isinstance(entries_like, dict):
         if "motions" in entries_like:
-            return _normalize_lafan1_motion_entries(entries_like["motions"], default_input_fps=default_input_fps)
+            return _normalize_lafan1_motion_entries(
+                entries_like["motions"], default_input_fps=default_input_fps
+            )
         if "lafan1_csv" in entries_like:
-            return _normalize_lafan1_motion_entries(entries_like["lafan1_csv"], default_input_fps=default_input_fps)
+            return _normalize_lafan1_motion_entries(
+                entries_like["lafan1_csv"], default_input_fps=default_input_fps
+            )
         dataset_cfg = entries_like.get("dataset")
         if isinstance(dataset_cfg, dict):
             trajectories_cfg = dataset_cfg.get("trajectories")
@@ -241,8 +253,12 @@ def _normalize_lafan1_motion_entries(entries_like: Any, default_input_fps: float
         normalized_entries: list[dict[str, Any]] = []
         for motion_name, path_spec in entries_like.items():
             for index, item in enumerate(_as_list(path_spec)):
-                fallback_name = str(motion_name) if index == 0 else f"{motion_name}_{index}"
-                normalized_entries.append(_normalize_one(item, fallback_name=fallback_name))
+                fallback_name = (
+                    str(motion_name) if index == 0 else f"{motion_name}_{index}"
+                )
+                normalized_entries.append(
+                    _normalize_one(item, fallback_name=fallback_name)
+                )
         return normalized_entries
 
     normalized_entries = []
@@ -325,12 +341,21 @@ class G1ObservationCfg:
         )
         reference_anchor_ori_b = ObsTerm(
             func=mdp.reference_anchor_ori_b,
-            params={"asset_cfg": SceneEntityCfg("robot"), "anchor_body_name": "torso_link"},
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
             noise=Unoise(n_min=-0.05, n_max=0.05),
         )
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2))
-        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5))
+        base_ang_vel = ObsTerm(
+            func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2)
+        )
+        joint_pos_rel = ObsTerm(
+            func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01)
+        )
+        joint_vel_rel = ObsTerm(
+            func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5)
+        )
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -352,23 +377,37 @@ class G1ObservationCfg:
         )
         reference_anchor_pos_b = ObsTerm(
             func=mdp.reference_anchor_pos_b,
-            params={"asset_cfg": SceneEntityCfg("robot"), "anchor_body_name": "torso_link"},
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
         )
         reference_anchor_ori_b = ObsTerm(
             func=mdp.reference_anchor_ori_b,
-            params={"asset_cfg": SceneEntityCfg("robot"), "anchor_body_name": "torso_link"},
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
         )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
             params={
-                "asset_cfg": SceneEntityCfg("robot", body_names=G1_TRACKED_BODY_NAMES),
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=G1_TRACKED_BODY_NAMES,
+                    preserve_order=True,
+                ),
                 "anchor_body_name": "torso_link",
             },
         )
         body_ori = ObsTerm(
             func=mdp.robot_body_ori_b,
             params={
-                "asset_cfg": SceneEntityCfg("robot", body_names=G1_TRACKED_BODY_NAMES),
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=G1_TRACKED_BODY_NAMES,
+                    preserve_order=True,
+                ),
                 "anchor_body_name": "torso_link",
             },
         )
@@ -421,10 +460,11 @@ class G1EventCfg:
         },
     )
 
-    reset_base = EventTerm(
-        func=mdp.reset_root_state_uniform,
+    reset_reference_state = EventTerm(
+        func=mdp.reset_root_and_joints_to_reference_with_randomization,
         mode="reset",
         params={
+            "asset_cfg": SceneEntityCfg("robot"),
             "pose_range": {
                 "x": (-0.05, 0.05),
                 "y": (-0.05, 0.05),
@@ -433,21 +473,9 @@ class G1EventCfg:
                 "pitch": (-0.1, 0.1),
                 "yaw": (-0.2, 0.2),
             },
-            "velocity_range": {
-                "x": (0.0, 0.0),
-                "y": (0.0, 0.0),
-                "z": (0.0, 0.0),
-                "roll": (0.0, 0.0),
-                "pitch": (0.0, 0.0),
-                "yaw": (0.0, 0.0),
-            },
+            "velocity_range": VELOCITY_RANGE,
+            "joint_position_range": (-0.1, 0.1),
         },
-    )
-
-    reset_robot_joints_to_reference = EventTerm(
-        func=mdp.reset_joints_to_reference,
-        mode="reset",
-        params={"asset_cfg": SceneEntityCfg("robot")},
     )
 
     push_robot = EventTerm(
@@ -476,18 +504,30 @@ class G1RewardsCfg:
     motion_global_anchor_pos = RewTerm(
         func=mdp.reference_global_anchor_position_error_exp,
         weight=0.5,
-        params={"asset_cfg": SceneEntityCfg("robot"), "anchor_body_name": "torso_link", "std": 0.3},
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "anchor_body_name": "torso_link",
+            "std": 0.3,
+        },
     )
     motion_global_anchor_ori = RewTerm(
         func=mdp.reference_global_anchor_orientation_error_exp,
         weight=0.5,
-        params={"asset_cfg": SceneEntityCfg("robot"), "anchor_body_name": "torso_link", "std": 0.4},
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "anchor_body_name": "torso_link",
+            "std": 0.4,
+        },
     )
     motion_body_pos = RewTerm(
         func=mdp.reference_relative_body_position_error_exp,
         weight=1.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=G1_TRACKED_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=G1_TRACKED_BODY_NAMES,
+                preserve_order=True,
+            ),
             "reference_body_names": G1_TRACKED_BODY_NAMES,
             "anchor_body_name": "torso_link",
             "std": 0.3,
@@ -497,7 +537,11 @@ class G1RewardsCfg:
         func=mdp.reference_relative_body_orientation_error_exp,
         weight=1.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=G1_TRACKED_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=G1_TRACKED_BODY_NAMES,
+                preserve_order=True,
+            ),
             "reference_body_names": G1_TRACKED_BODY_NAMES,
             "anchor_body_name": "torso_link",
             "std": 0.4,
@@ -507,7 +551,11 @@ class G1RewardsCfg:
         func=mdp.reference_global_body_linear_velocity_error_exp,
         weight=1.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=G1_TRACKED_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=G1_TRACKED_BODY_NAMES,
+                preserve_order=True,
+            ),
             "reference_body_names": G1_TRACKED_BODY_NAMES,
             "std": 1.0,
         },
@@ -516,7 +564,11 @@ class G1RewardsCfg:
         func=mdp.reference_global_body_angular_velocity_error_exp,
         weight=1.0,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=G1_TRACKED_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=G1_TRACKED_BODY_NAMES,
+                preserve_order=True,
+            ),
             "reference_body_names": G1_TRACKED_BODY_NAMES,
             "std": 3.14,
         },
@@ -559,7 +611,11 @@ class G1TerminationsCfg:
     ee_body_pos = DoneTerm(
         func=mdp.bad_reference_body_pos_z_only,
         params={
-            "asset_cfg": SceneEntityCfg("robot", body_names=G1_EE_BODY_NAMES),
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=G1_EE_BODY_NAMES,
+                preserve_order=True,
+            ),
             "reference_body_names": G1_EE_BODY_NAMES,
             "threshold": 0.25,
         },
@@ -583,6 +639,9 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
 
     _debug_rewards: bool = False
 
+    # Master switch for all expensive visualizers/marker debug rendering.
+    # Keep disabled by default for training/runtime performance.
+    enable_visualizers: bool = False
     visualize_reference_arrows: bool = True
     print_reference_velocity: bool = False
     print_reference_velocity_every: int = 50
@@ -609,7 +668,12 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
         if self.scene.contact_forces is not None:
             self.scene.contact_forces.update_period = self.sim.dt
             self.scene.contact_forces.force_threshold = 10.0
-            self.scene.contact_forces.debug_vis = True
+            self.scene.contact_forces.debug_vis = bool(self.enable_visualizers)
+
+        # Reference marker visualizers are also gated by the master toggle.
+        self.visualize_reference_arrows = bool(
+            self.enable_visualizers and self.visualize_reference_arrows
+        )
 
         self.scene.height_scanner = None
 
@@ -699,7 +763,9 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
             trajectories_cfg["lafan1_csv"] = manifest_entries
             dataset_cfg["trajectories"] = trajectories_cfg
             self.loader_kwargs["dataset"] = dataset_cfg
-            self.loader_kwargs["dataset_name"] = self.loader_kwargs.get("dataset_name", "lafan1")
+            self.loader_kwargs["dataset_name"] = self.loader_kwargs.get(
+                "dataset_name", "lafan1"
+            )
             # If manifest is provided and no explicit cfg motion filter is set, include all manifest motions.
             if self.lafan1_motions is None:
                 self.motions = [entry["name"] for entry in manifest_entries]
@@ -740,7 +806,9 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
         if self.lafan1_control_freq is not None:
             self.loader_kwargs["control_freq"] = float(self.lafan1_control_freq)
 
-    def _sync_loader_frequency_from_sources(self, source_entries: list[dict[str, Any]]) -> None:
+    def _sync_loader_frequency_from_sources(
+        self, source_entries: list[dict[str, Any]]
+    ) -> None:
         if not self.autodetect_motion_fps:
             return
         # Only auto-sync when all sources report the same fps metadata.

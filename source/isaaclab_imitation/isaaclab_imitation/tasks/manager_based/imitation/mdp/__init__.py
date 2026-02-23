@@ -20,7 +20,11 @@ from .rewards import (
     reference_global_body_linear_velocity_error_exp,
     reference_global_body_angular_velocity_error_exp,
 )
-from .events import reset_joints_to_reference
+from .events import (
+    randomize_joint_default_pos,
+    reset_joints_to_reference,
+    reset_root_and_joints_to_reference_with_randomization,
+)
 from .observations import (
     reference_motion_command,
     reference_anchor_pos_b,
@@ -61,7 +65,9 @@ __all__ = [
     "reference_relative_body_orientation_error_exp",
     "reference_global_body_linear_velocity_error_exp",
     "reference_global_body_angular_velocity_error_exp",
+    "randomize_joint_default_pos",
     "reset_joints_to_reference",
+    "reset_root_and_joints_to_reference_with_randomization",
     "reference_motion_command",
     "reference_anchor_pos_b",
     "reference_anchor_ori_b",
