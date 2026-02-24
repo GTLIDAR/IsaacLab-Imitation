@@ -17,7 +17,9 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         super().__post_init__()
 
         assert isinstance(self, IPMDRLOptConfig)
-        assert self.value_function is not None, "Value function configuration must be provided."
+        assert self.value_function is not None, (
+            "Value function configuration must be provided."
+        )
 
         self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
         self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
@@ -56,4 +58,4 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_input_type = "s'"
         self.ipmd.use_estimated_rewards_for_ppo = True
         self.ipmd.bc_loss_coeff = 0.0
-        self.ipmd.expert_batch_size = 4000
+        self.ipmd.expert_batch_size = 10000

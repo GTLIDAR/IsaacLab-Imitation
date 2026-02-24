@@ -134,7 +134,7 @@ G1_UNDESIRED_CONTACT_PATTERN = (
 # Observation keys used by rlopt configs.
 G1_POLICY_OBS_KEYS: list[str] = ["policy"]
 G1_VALUE_OBS_KEYS: list[str] = ["critic"]
-G1_REWARD_OBS_KEYS: list[str] = ["critic"]
+G1_REWARD_OBS_KEYS: list[str] = ["invrwd"]
 
 
 def _resolve_workspace_path(*parts: str) -> str:
@@ -417,8 +417,63 @@ class G1ObservationCfg:
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
         actions = ObsTerm(func=mdp.last_action)
 
+    @configclass
+    class RewardCfg(ObsGroup):
+        """Privileged critic observations."""
+
+        reference_motion = ObsTerm(
+            func=mdp.reference_motion_command,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=G1_29DOF_JOINT_NAMES,
+                )
+            },
+        )
+        reference_anchor_pos_b = ObsTerm(
+            func=mdp.reference_anchor_pos_b,
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
+        )
+        reference_anchor_ori_b = ObsTerm(
+            func=mdp.reference_anchor_ori_b,
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
+        )
+        body_pos = ObsTerm(
+            func=mdp.robot_body_pos_b,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=G1_TRACKED_BODY_NAMES,
+                    preserve_order=True,
+                ),
+                "anchor_body_name": "torso_link",
+            },
+        )
+        body_ori = ObsTerm(
+            func=mdp.robot_body_ori_b,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=G1_TRACKED_BODY_NAMES,
+                    preserve_order=True,
+                ),
+                "anchor_body_name": "torso_link",
+            },
+        )
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
+    invrwd: RewardCfg = RewardCfg()
 
 
 @configclass
