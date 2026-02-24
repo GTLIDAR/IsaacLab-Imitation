@@ -1,0 +1,183 @@
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# All rights reserved.
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+# Here we set the parts that would
+# be reused between services to an
+# extension field
+# https://docs.docker.com/compose/compose-file/compose-file-v3/#extension-fields
+x-default-isaac-lab-volumes: &default-isaac-lab-volumes
+  # These volumes follow from this page
+  # https://docs.omniverse.nvidia.com/app_isaacsim/app_isaacsim/install_faq.html#save-isaac-sim-configs-on-local-disk
+  - type: volume
+    source: isaac-cache-kit
+    target: ${DOCKER_ISAACSIM_ROOT_PATH}/kit/cache
+  - type: volume
+    source: isaac-cache-ov
+    target: ${DOCKER_USER_HOME}/.cache/ov
+  - type: volume
+    source: isaac-cache-pip
+    target: ${DOCKER_USER_HOME}/.cache/pip
+  - type: volume
+    source: isaac-cache-gl
+    target: ${DOCKER_USER_HOME}/.cache/nvidia/GLCache
+  - type: volume
+    source: isaac-cache-compute
+    target: ${DOCKER_USER_HOME}/.nv/ComputeCache
+  - type: volume
+    source: isaac-logs
+    target: ${DOCKER_USER_HOME}/.nvidia-omniverse/logs
+  - type: volume
+    source: isaac-carb-logs
+    target: ${DOCKER_ISAACSIM_ROOT_PATH}/kit/logs/Kit/Isaac-Sim
+  - type: volume
+    source: isaac-data
+    target: ${DOCKER_USER_HOME}/.local/share/ov/data
+  - type: volume
+    source: isaac-docs
+    target: ${DOCKER_USER_HOME}/Documents
+    # This overlay allows changes on the local files to
+    # be reflected within the container immediately
+  - type: bind
+    source: ../source
+    target: ${DOCKER_ISAACLAB_PATH}/source
+  - type: bind
+    source: ../scripts
+    target: ${DOCKER_ISAACLAB_PATH}/scripts
+  - type: bind
+    source: ../docs
+    target: ${DOCKER_ISAACLAB_PATH}/docs
+  - type: bind
+    source: ../tools
+    target: ${DOCKER_ISAACLAB_PATH}/tools
+  - type: bind
+    source: ../../IsaacLab
+    target: ${DOCKER_ISAACLAB_PATH}/IsaacLab
+  - type: bind
+    source: ../../RLOpt
+    target: ${DOCKER_ISAACLAB_PATH}/RLOpt
+  - type: bind
+    source: ../../ImitationLearningTools
+    target: ${DOCKER_ISAACLAB_PATH}/ImitationLearningTools
+  - type: bind
+    source: ../../unitree_rl_lab
+    target: ${DOCKER_ISAACLAB_PATH}/unitree_rl_lab
+  - type: bind
+    source: ../../unitree_model
+    target: ${DOCKER_ISAACLAB_PATH}/unitree_model
+    # The effect of these volumes is twofold:
+    # 1. Prevent root-owned files from flooding the _build and logs dir
+    #    on the host machine
+    # 2. Preserve the artifacts in persistent volumes for later copying
+    #    to the host machine
+  - type: volume
+    source: isaac-lab-docs
+    target: ${DOCKER_ISAACLAB_PATH}/docs/_build
+  - type: volume
+    source: isaac-lab-logs
+    target: ${DOCKER_ISAACLAB_PATH}/logs
+  - type: volume
+    source: isaac-lab-data
+    target: ${DOCKER_ISAACLAB_PATH}/data_storage
+    # This volume is used to store the history of the bash shell
+  - type: bind
+    source: .isaac-lab-docker-history
+    target: ${DOCKER_USER_HOME}/.bash_history
+x-default-isaac-lab-environment: &default-isaac-lab-environment
+  - ISAACSIM_PATH=${DOCKER_ISAACLAB_PATH}/IsaacLab/_isaac_sim
+  - ISAACLAB_PATH=${DOCKER_ISAACLAB_PATH}/IsaacLab
+  - PYTHONPATH=${DOCKER_ISAACLAB_PATH}/IsaacLab/source/isaaclab:${DOCKER_ISAACLAB_PATH}/IsaacLab/source/isaaclab_tasks:${DOCKER_ISAACLAB_PATH}/IsaacLab/source/isaaclab_assets:${DOCKER_ISAACLAB_PATH}/IsaacLab/source/isaaclab_rl:${DOCKER_ISAACLAB_PATH}/IsaacLab/source/isaaclab_mimic:${DOCKER_ISAACLAB_PATH}/source/isaaclab_imitation:${DOCKER_ISAACLAB_PATH}/unitree_rl_lab/source/unitree_rl_lab:${DOCKER_ISAACLAB_PATH}/RLOpt:${DOCKER_ISAACLAB_PATH}/ImitationLearningTools
+  - OMNI_KIT_ALLOW_ROOT=1
+  - UNITREE_MODEL_DIR=${DOCKER_ISAACLAB_PATH}/unitree_model
+  - UNITREE_ROS_DIR=${DOCKER_ISAACLAB_PATH}/unitree_ros
+
+x-default-isaac-lab-deploy: &default-isaac-lab-deploy
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [ gpu ]
+
+services:
+  # This service is the base Isaac Lab image
+  isaac-lab-base:
+    profiles: [ "base" ]
+    env_file: .env.base
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.base
+      additional_contexts:
+        isaaclab: ../../IsaacLab
+        unitree_rl_lab: ../../unitree_rl_lab
+        unitree_model: ../../unitree_model
+      args:
+        - ISAACSIM_BASE_IMAGE_ARG=${ISAACSIM_BASE_IMAGE}
+        - ISAACSIM_VERSION_ARG=${ISAACSIM_VERSION}
+        - ISAACSIM_ROOT_PATH_ARG=${DOCKER_ISAACSIM_ROOT_PATH}
+        - ISAACLAB_PATH_ARG=${DOCKER_ISAACLAB_PATH}
+        - DOCKER_USER_HOME_ARG=${DOCKER_USER_HOME}
+    image: isaac-lab-base${DOCKER_NAME_SUFFIX-}
+    container_name: isaac-lab-base${DOCKER_NAME_SUFFIX-}
+    environment: *default-isaac-lab-environment
+    volumes: *default-isaac-lab-volumes
+    tmpfs:
+      - /tmp:size=8G
+    network_mode: host
+    deploy: *default-isaac-lab-deploy
+    # Ensure IsaacLab's expected symlink exists even when the repo is bind-mounted from host.
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - ln -sfn /isaac-sim /workspace/isaaclab/IsaacLab/_isaac_sim && exec tail -f /dev/null
+    stdin_open: true
+    tty: true
+
+  # This service adds a ROS2 Humble
+  # installation on top of the base image
+  isaac-lab-ros2:
+    profiles: [ "ros2" ]
+    env_file:
+      - .env.base
+      - .env.ros2
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile.ros2
+      args:
+        # ROS2_APT_PACKAGE will default to NONE. This is to
+        # avoid a warning message when building only the base profile
+        # with the .env.base file
+        - ROS2_APT_PACKAGE=${ROS2_APT_PACKAGE:-NONE}
+        # Make sure that the correct Docker Name Suffix is being passed to the dockerfile, to know which base image to
+        # start from.
+        - DOCKER_NAME_SUFFIX=${DOCKER_NAME_SUFFIX-}
+    image: isaac-lab-ros2${DOCKER_NAME_SUFFIX-}
+    container_name: isaac-lab-ros2${DOCKER_NAME_SUFFIX-}
+    environment: *default-isaac-lab-environment
+    volumes: *default-isaac-lab-volumes
+    network_mode: host
+    deploy: *default-isaac-lab-deploy
+    # Ensure IsaacLab's expected symlink exists even when the repo is bind-mounted from host.
+    entrypoint:
+      - /bin/bash
+      - -lc
+      - ln -sfn /isaac-sim /workspace/isaaclab/IsaacLab/_isaac_sim && exec tail -f /dev/null
+    stdin_open: true
+    tty: true
+
+volumes:
+  # isaac-sim
+  isaac-cache-kit:
+  isaac-cache-ov:
+  isaac-cache-pip:
+  isaac-cache-gl:
+  isaac-cache-compute:
+  isaac-logs:
+  isaac-carb-logs:
+  isaac-data:
+  isaac-docs:
+  # isaac-lab
+  isaac-lab-docs:
+  isaac-lab-logs:
+  isaac-lab-data:
