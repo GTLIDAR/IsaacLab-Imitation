@@ -52,13 +52,13 @@ x-default-isaac-lab-volumes: &default-isaac-lab-volumes
     source: ../tools
     target: ${DOCKER_ISAACLAB_PATH}/tools
   - type: bind
-    source: ../../IsaacLab
+    source: ../IsaacLab
     target: ${DOCKER_ISAACLAB_PATH}/IsaacLab
   - type: bind
-    source: ../../RLOpt
+    source: ../RLOpt
     target: ${DOCKER_ISAACLAB_PATH}/RLOpt
   - type: bind
-    source: ../../ImitationLearningTools
+    source: ../ImitationLearningTools
     target: ${DOCKER_ISAACLAB_PATH}/ImitationLearningTools
   - type: bind
     source: ../../unitree_rl_lab
@@ -109,7 +109,7 @@ services:
       context: ../
       dockerfile: docker/Dockerfile.base
       additional_contexts:
-        isaaclab: ../../IsaacLab
+        isaaclab: ../IsaacLab
         unitree_rl_lab: ../../unitree_rl_lab
         unitree_model: ../../unitree_model
       args:

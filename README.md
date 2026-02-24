@@ -12,10 +12,16 @@ It allows you to develop in an isolated environment, outside of the core Isaac L
 
 **Keywords:** extension, template, isaaclab
 
+## Repository setup for this workspace
+
+For the multi-repo workspace setup (IsaacLab, RLOpt, ImitationLearningTools) and cluster submission notes,
+see [REPO_SETUP.md](REPO_SETUP.md).
+
 ## Installation
 
 - Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
   We recommend using the conda or uv installation as it simplifies calling Python scripts from the terminal.
+  For cluster submission through `docker/cluster`, a local conda/venv is not required.
 
 - Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
 

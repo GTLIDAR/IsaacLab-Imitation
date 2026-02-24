@@ -117,7 +117,7 @@ sync_extra_repos() {
     local local_path
     local remote_subdir
 
-    local_workspace_root="$(realpath "$SCRIPT_DIR/../../..")"
+    local_workspace_root="$(realpath "$SCRIPT_DIR/../..")"
     local_specs="${CLUSTER_EXTRA_SYNC_SPECS:-$local_workspace_root/IsaacLab:IsaacLab $local_workspace_root/RLOpt:RLOpt $local_workspace_root/ImitationLearningTools:ImitationLearningTools}"
 
     for spec in $local_specs; do
