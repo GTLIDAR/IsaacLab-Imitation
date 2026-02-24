@@ -82,7 +82,7 @@ from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_che
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
 from isaaclab_tasks.utils.parse_cfg import get_checkpoint_path
-import IsaacLabImitation.tasks  # noqa: F401
+import isaaclab_imitation.tasks  # noqa: F401
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 

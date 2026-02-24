@@ -104,7 +104,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 
 # import logger
 logger = logging.getLogger(__name__)
-import IsaacLabImitation.tasks  # noqa: F401
+import isaaclab_imitation.tasks  # noqa: F401
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)

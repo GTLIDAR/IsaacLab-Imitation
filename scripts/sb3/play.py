@@ -92,7 +92,7 @@ import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
 from isaaclab_tasks.utils.parse_cfg import get_checkpoint_path
 
-import IsaacLabImitation.tasks  # noqa: F401
+import isaaclab_imitation.tasks  # noqa: F401
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)

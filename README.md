@@ -14,8 +14,12 @@ It allows you to develop in an isolated environment, outside of the core Isaac L
 
 ## Repository setup for this workspace
 
-For the multi-repo workspace setup (IsaacLab, RLOpt, ImitationLearningTools) and cluster submission notes,
+For the multi-repo workspace setup (IsaacLab, RLOpt, ImitationLearningTools), required [`unitree_rl_lab`](https://github.com/unitreerobotics/unitree_rl_lab)
+checkout/setup, and cluster submission notes,
 see [REPO_SETUP.md](REPO_SETUP.md).
+
+[`unitree_rl_lab`](https://github.com/unitreerobotics/unitree_rl_lab) is required for training scripts and Docker/cluster workflows in this repo.
+Please follow the setup steps in the upstream [`unitree_rl_lab`](https://github.com/unitreerobotics/unitree_rl_lab) README as part of your local setup.
 
 ## Installation
 
@@ -29,7 +33,7 @@ see [REPO_SETUP.md](REPO_SETUP.md).
 
     ```bash
     # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/IsaacLabImitation
+    python -m pip install -e source/isaaclab_imitation
 
 - Verify that the extension is correctly installed by:
 
@@ -80,7 +84,7 @@ This helps in indexing all the python modules for intelligent suggestions while 
 
 ### Setup as Omniverse Extension (Optional)
 
-We provide an example UI extension that will load upon enabling your extension defined in `source/IsaacLabImitation/IsaacLabImitation/ui_extension_example.py`.
+We provide an example UI extension that will load upon enabling your extension defined in `source/isaaclab_imitation/isaaclab_imitation/ui_extension_example.py`.
 
 To enable your extension, follow these steps:
 
@@ -120,7 +124,7 @@ In this case, add the path to your extension in `.vscode/settings.json` under th
 ```json
 {
     "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/IsaacLabImitation"
+        "<path-to-ext-repo>/source/isaaclab_imitation"
     ]
 }
 ```

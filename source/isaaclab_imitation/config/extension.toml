@@ -23,7 +23,7 @@ keywords = ["extension", "template", "isaaclab"]
 # NOTE: Add additional dependencies here
 
 [[python.module]]
-name = "IsaacLabImitation"
+name = "isaaclab_imitation"
 
 [isaac_lab_settings]
 # TODO: Uncomment and list any apt dependencies here.

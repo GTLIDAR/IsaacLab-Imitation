@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Installation script for the 'IsaacLabImitation' python package."""
+"""Installation script for the 'isaaclab_imitation' python package."""
 
 import os
 import toml

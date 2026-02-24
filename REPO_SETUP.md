@@ -8,6 +8,10 @@ This repo now tracks its dependent repos as submodules:
 
 `IsaacLab-Imitation` itself remains the top-level repo.
 
+Additionally required (currently not a submodule):
+
+- `unitree_rl_lab/` (sibling repository)
+
 ## 1. Clone with submodules
 
 ```bash
@@ -31,6 +35,7 @@ git remote -v
 git -C IsaacLab remote -v
 git -C RLOpt remote -v
 git -C ImitationLearningTools remote -v
+git -C ../unitree_rl_lab remote -v
 ```
 
 Expected default remotes:
@@ -39,6 +44,22 @@ Expected default remotes:
 - `IsaacLab`: `origin -> git@github.com:GTLIDAR/IsaacLab.git`
 - `RLOpt`: `origin -> git@github.com:fei-yang-wu/RLOpt.git`
 - `ImitationLearningTools`: `origin -> git@github.com:GTLIDAR/ImitationLearningTools.git`
+- `unitree_rl_lab`: `origin -> https://github.com/unitreerobotics/unitree_rl_lab.git`
+
+## 2b. Set up unitree_rl_lab (required)
+
+If `unitree_rl_lab` is missing as a sibling repo:
+
+```bash
+cd ..
+git clone https://github.com/unitreerobotics/unitree_rl_lab.git
+```
+
+Then follow the upstream setup instructions in:
+
+- `../unitree_rl_lab/README.md`
+
+At minimum, run its installation step and required asset/environment setup before training.
 
 Optional extra remotes used in this workspace:
 

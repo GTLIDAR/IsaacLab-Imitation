@@ -103,7 +103,7 @@ from isaaclab.utils.io import dump_pickle, dump_yaml
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
-import IsaacLabImitation.tasks  # noqa: F401
+import isaaclab_imitation.tasks  # noqa: F401
 
 from omegaconf import OmegaConf
 from isaaclab_imitation.envs.torchrl import IsaacLabWrapper
