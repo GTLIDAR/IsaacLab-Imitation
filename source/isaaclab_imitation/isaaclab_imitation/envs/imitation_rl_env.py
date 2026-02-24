@@ -312,8 +312,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             name.startswith("body_") and name[5:].isdigit()
             for name in self.reference_body_names
         )
-        if has_generic_names and num_reference_bodies == len(robot_body_names):
-            self.reference_body_names = robot_body_names
+        if has_generic_names and len(robot_body_names) >= num_reference_bodies:
+            self.reference_body_names = robot_body_names[:num_reference_bodies]
 
     @staticmethod
     def _normalize_body_name_for_matching(name: str) -> str:

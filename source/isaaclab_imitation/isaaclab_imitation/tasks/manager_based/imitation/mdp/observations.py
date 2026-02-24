@@ -114,26 +114,39 @@ def _resolve_reference_body_indices(
     def _has_only_generic_body_names(names: Sequence[str]) -> bool:
         return len(names) > 0 and all(name.startswith("body_") and name[5:].isdigit() for name in names)
 
-    # iltools loaders may emit body_0...body_N metadata. If body counts match the robot,
-    # use robot body names to keep index-wise alignment and avoid name lookup failures.
-    if len(all_reference_body_names) == 0 or _has_only_generic_body_names(all_reference_body_names):
+    reference_names_were_generic = len(all_reference_body_names) == 0 or _has_only_generic_body_names(
+        all_reference_body_names
+    )
+
+    ref_body_pos = env.current_reference.get("xpos")
+    if ref_body_pos is None:
+        ref_body_pos = env.current_reference.get("body_pos_w")
+    reference_body_count = int(ref_body_pos.shape[1]) if ref_body_pos is not None and ref_body_pos.ndim >= 3 else None
+
+    robot_lookup: dict[str, int] = {}
+    robot_lookup_lower: dict[str, int] = {}
+
+    # iltools loaders may emit generic body_0...body_N metadata.
+    # Prefer semantic robot names whenever index-wise alignment is plausible.
+    if reference_names_were_generic:
         try:
             asset: Articulation = env.scene["robot"]
             robot_body_names = list(asset.body_names)
-            ref_body_pos = env.current_reference.get("xpos")
-            if ref_body_pos is None:
-                ref_body_pos = env.current_reference.get("body_pos_w")
-            if ref_body_pos is not None and ref_body_pos.ndim >= 3 and int(ref_body_pos.shape[1]) == len(robot_body_names):
-                if all_reference_body_names != robot_body_names:
-                    env.reference_body_names = list(robot_body_names)
+            robot_lookup = {name: idx for idx, name in enumerate(robot_body_names)}
+            robot_lookup_lower = {name.lower(): idx for idx, name in enumerate(robot_body_names)}
+
+            if reference_body_count is not None and reference_body_count > 0 and len(robot_body_names) >= reference_body_count:
+                inferred_reference_body_names = robot_body_names[:reference_body_count]
+                if all_reference_body_names != inferred_reference_body_names:
+                    env.reference_body_names = list(inferred_reference_body_names)
                     if hasattr(env, "_reference_body_index_cache"):
                         env._reference_body_index_cache = {}  # type: ignore[attr-defined]
-                all_reference_body_names = robot_body_names
+                all_reference_body_names = inferred_reference_body_names
         except Exception:
             # Fall back to metadata-driven lookup below.
             pass
 
-    if len(all_reference_body_names) == 0:
+    if len(all_reference_body_names) == 0 and len(robot_lookup) == 0:
         raise RuntimeError(
             "Reference body names are unavailable in the environment metadata. "
             "Ensure dataset zarr metadata contains `body_names` or that reference body "
@@ -148,6 +161,19 @@ def _resolve_reference_body_indices(
 
     lookup = {name: idx for idx, name in enumerate(all_reference_body_names)}
     lookup_lower = {name.lower(): idx for idx, name in enumerate(all_reference_body_names)}
+    max_reference_body_index = reference_body_count if reference_body_count is not None else len(all_reference_body_names)
+
+    def _lookup_from_robot_names(name: str) -> int | None:
+        if len(robot_lookup) == 0 or max_reference_body_index <= 0:
+            return None
+        if name in robot_lookup:
+            idx = robot_lookup[name]
+            return idx if idx < max_reference_body_index else None
+        lowered = name.lower()
+        if lowered in robot_lookup_lower:
+            idx = robot_lookup_lower[lowered]
+            return idx if idx < max_reference_body_index else None
+        return None
 
     def _find_one(name: str) -> int:
         if name in lookup:
@@ -159,6 +185,13 @@ def _resolve_reference_body_indices(
             return lookup[simplified]
         if simplified.lower() in lookup_lower:
             return lookup_lower[simplified.lower()]
+        if reference_names_were_generic:
+            robot_idx = _lookup_from_robot_names(name)
+            if robot_idx is not None:
+                return robot_idx
+            robot_idx = _lookup_from_robot_names(simplified)
+            if robot_idx is not None:
+                return robot_idx
         raise KeyError(name)
 
     try:
