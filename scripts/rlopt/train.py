@@ -311,7 +311,7 @@ def main(
     )
 
     if isinstance(agent, IPMD):
-        rb_dir = "/home/fwu/Documents/Research/SkillLearning/IsaacLabImitation/logs/reference_replay/Isaac-Imitation-G1-v0/2026-02-24_16-21-10/torchrl_rb"
+        rb_dir = "data/2026-02-24_16-21-10/torchrl_rb"
         # loads() is an instance method - construct a buffer with matching storage first, then load state
         storage = LazyMemmapStorage(max_size=10000)
         td_buffer = TensorDictReplayBuffer(storage=storage)

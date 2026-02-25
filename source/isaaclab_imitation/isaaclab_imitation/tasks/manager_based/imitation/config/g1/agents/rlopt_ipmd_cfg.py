@@ -25,7 +25,8 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
         self.ipmd.reward_input_keys = list(G1_REWARD_OBS_KEYS)
 
-        self.collector.init_random_frames = 0
+        # More initial exploration to improve policy-state coverage for inverse reward.
+        self.collector.init_random_frames = 49152
         self.collector.frames_per_batch = 24
         self.replay_buffer.size = 4096 * 24
 
@@ -57,5 +58,44 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
 
         self.ipmd.reward_input_type = "s'"
         self.ipmd.use_estimated_rewards_for_ppo = True
-        self.ipmd.bc_loss_coeff = 0.0
+        self.ipmd.use_reward_target_network = True
+        self.ipmd.use_reward_target_for_ppo = True
+        self.ipmd.reward_target_polyak = 0.995
+        self.ipmd.reward_target_update_interval = 1
+
+        # Decouple and slow reward updates relative to PPO.
+        self.ipmd.reward_optimizer = "adamw"
+        self.ipmd.reward_lr = 2.0e-4
+        self.ipmd.reward_weight_decay = 0.0
+        self.ipmd.reward_max_grad_norm = 1.0
+        self.ipmd.reward_update_interval = 2
+
+        # Trust-region / anti-collapse reward objective.
+        self.ipmd.reward_margin = 0.05
+        self.ipmd.reward_consistency_coeff = 0.2
+
+        # AMP-style regularization and replay for reward learning.
+        self.ipmd.normalize_reward_input = True
+        self.ipmd.reward_grad_penalty_coeff = 0.2
+        self.ipmd.reward_logit_reg_coeff = 0.02
+        self.ipmd.reward_param_weight_decay_coeff = 1.0e-5
+        self.ipmd.reward_replay_size = 200000
+        self.ipmd.reward_replay_ratio = 0.5
+        self.ipmd.reward_replay_keep_prob = 0.25
+
+        # Curriculum: smoothly mix env imitation reward with learned reward.
+        self.ipmd.reward_mix_alpha_start = 0.0
+        self.ipmd.reward_mix_alpha_end = 1.0
+        self.ipmd.reward_mix_anneal_updates = 20000
+        self.ipmd.reward_mix_gate_estimated_std_min = 0.05
+        self.ipmd.reward_mix_alpha_when_unstable = 0.15
+        self.ipmd.reward_mix_gate_after_updates = 500
+
+        # Exploration and BC warm-start schedules.
+        self.ipmd.entropy_coeff_start = 0.02
+        self.ipmd.entropy_coeff_end = self.ppo.entropy_coeff
+        self.ipmd.entropy_schedule_updates = 15000
+        self.ipmd.bc_loss_coeff = 0.02
+        self.ipmd.bc_warmup_updates = 20000
+        self.ipmd.bc_final_coeff = 0.0
         self.ipmd.expert_batch_size = 10000
