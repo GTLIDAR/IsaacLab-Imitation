@@ -63,13 +63,13 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_target_polyak = 0.995
         self.ipmd.reward_target_update_interval = 1
 
-        # Decouple and slow reward updates relative to PPO.
+        # Decouple and slow reward updates relative to PPO (combo G: B + F).
         self.ipmd.reward_optimizer = "adamw"
-        self.ipmd.reward_lr = 2.0e-4
+        self.ipmd.reward_lr = 1.0e-5
         self.ipmd.reward_weight_decay = 0.0
         self.ipmd.reward_max_grad_norm = 1.0
-        self.ipmd.reward_update_interval = 2
-        self.ipmd.reward_updates_per_policy_update = 1
+        self.ipmd.reward_update_interval = 100
+        self.ipmd.reward_updates_per_policy_update = 2
         self.ipmd.reward_update_warmup_updates = 500
         # Keep expert reward minibatch aligned with PPO minibatch by default.
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
@@ -82,15 +82,15 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
 
         # AMP-style regularization and replay for reward learning.
         self.ipmd.normalize_reward_input = True
-        self.ipmd.reward_input_noise_std = 0.0
-        self.ipmd.reward_input_dropout_prob = 0.0
+        self.ipmd.reward_input_noise_std = 0.01
+        self.ipmd.reward_input_dropout_prob = 0.05
         self.ipmd.reward_grad_penalty_coeff = 0.2
         self.ipmd.reward_logit_reg_coeff = 0.02
         self.ipmd.reward_param_weight_decay_coeff = 1.0e-5
         self.ipmd.reward_replay_size = 200000
         self.ipmd.reward_replay_ratio = 0.5
         self.ipmd.reward_replay_keep_prob = 0.25
-        self.ipmd.reward_replay_reset_interval_updates = 0
+        self.ipmd.reward_replay_reset_interval_updates = 5000
 
         # Curriculum: smoothly mix env imitation reward with learned reward.
         self.ipmd.reward_mix_alpha_start = 0.0
