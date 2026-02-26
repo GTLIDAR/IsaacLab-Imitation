@@ -12,6 +12,8 @@ tabs 4
 
 # get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+# Resolved "<local_path>:<remote_subdir>" sync specs used by the current job submission.
+SYNC_EXTRA_REPO_SPECS=""
 
 #==
 # Functions
@@ -91,6 +93,149 @@ sync_tree_to_cluster() {
         "$CLUSTER_LOGIN:$dst_path/"
 }
 
+dir_has_entries() {
+    local dir_path="$1"
+    if [ ! -d "$dir_path" ]; then
+        return 1
+    fi
+    [ -n "$(find "$dir_path" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]
+}
+
+repo_is_dirty() {
+    local repo_path="$1"
+    if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 1
+    fi
+    [ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]
+}
+
+resolve_repo_sync_path() {
+    local repo_label="$1"
+    local workspace_path="$2"
+    local sibling_path="$3"
+    local override_var_name="$4"
+    local override_path="${!override_var_name:-}"
+    local resolved_path
+
+    if [ -n "$override_path" ]; then
+        if [ ! -d "$override_path" ]; then
+            echo "[ERROR] $override_var_name is set but path does not exist: '$override_path'" >&2
+            exit 1
+        fi
+        resolved_path="$(realpath "$override_path")"
+        echo "[INFO] Using $repo_label from $override_var_name: '$resolved_path'" >&2
+        echo "$resolved_path"
+        return
+    fi
+
+    if dir_has_entries "$workspace_path"; then
+        resolved_path="$(realpath "$workspace_path")"
+        echo "$resolved_path"
+        return
+    fi
+
+    if dir_has_entries "$sibling_path"; then
+        resolved_path="$(realpath "$sibling_path")"
+        echo "[INFO] Using sibling $repo_label repo because workspace path is empty: '$resolved_path'" >&2
+        echo "$resolved_path"
+        return
+    fi
+
+    resolved_path="$(realpath "$workspace_path" 2>/dev/null || echo "$workspace_path")"
+    echo "$resolved_path"
+}
+
+build_default_sync_specs() {
+    local local_workspace_root="$1"
+    local sibling_workspace_root="$2"
+    local isaaclab_local_path
+    local rlopt_local_path
+    local ilt_local_path
+
+    isaaclab_local_path="$(resolve_repo_sync_path "IsaacLab" "$local_workspace_root/IsaacLab" "$sibling_workspace_root/IsaacLab" "CLUSTER_ISAACLAB_LOCAL_PATH")"
+    rlopt_local_path="$(resolve_repo_sync_path "RLOpt" "$local_workspace_root/RLOpt" "$sibling_workspace_root/RLOpt" "CLUSTER_RLOPT_LOCAL_PATH")"
+    ilt_local_path="$(resolve_repo_sync_path "ImitationLearningTools" "$local_workspace_root/ImitationLearningTools" "$sibling_workspace_root/ImitationLearningTools" "CLUSTER_IMITATION_TOOLS_LOCAL_PATH")"
+    echo "$isaaclab_local_path:IsaacLab $rlopt_local_path:RLOpt $ilt_local_path:ImitationLearningTools"
+}
+
+append_repo_manifest_entry() {
+    local manifest_file="$1"
+    local repo_name="$2"
+    local local_path="$3"
+    local remote_subdir="$4"
+    local resolved_local_path
+    local head_sha
+    local branch
+    local state
+    local changed_files
+
+    resolved_local_path="$(realpath "$local_path" 2>/dev/null || echo "$local_path")"
+
+    if git -C "$resolved_local_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        head_sha="$(git -C "$resolved_local_path" rev-parse HEAD 2>/dev/null || echo "N/A")"
+        branch="$(git -C "$resolved_local_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "N/A")"
+        changed_files="$(git -C "$resolved_local_path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+        if [ "${changed_files:-0}" -gt 0 ]; then
+            state="dirty"
+        else
+            state="clean"
+        fi
+    else
+        head_sha="N/A"
+        branch="N/A"
+        state="not_git_repo"
+        changed_files="N/A"
+    fi
+
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$repo_name" \
+        "$remote_subdir" \
+        "$resolved_local_path" \
+        "$head_sha" \
+        "$branch" \
+        "$state" \
+        "$changed_files" >> "$manifest_file"
+
+    echo "[INFO] Repo snapshot: name='$repo_name' remote_subdir='$remote_subdir' sha='$head_sha' branch='$branch' state='$state' changed_files='$changed_files' local_path='$resolved_local_path'"
+}
+
+record_repo_sync_manifest() {
+    local local_workspace_root
+    local manifest_local_file
+    local manifest_remote_file
+    local local_path
+    local remote_subdir
+
+    local_workspace_root="$(realpath "$SCRIPT_DIR/../..")"
+    manifest_local_file="$(mktemp "${TMPDIR:-/tmp}/isaaclab_cluster_repo_manifest.XXXXXX")"
+    manifest_remote_file="$CLUSTER_ISAACLAB_DIR/repo_sync_manifest.tsv"
+
+    {
+        echo "# Cluster repo sync manifest"
+        echo "generated_at_utc=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        echo "submission_host=$(hostname)"
+        echo "cluster_login=$CLUSTER_LOGIN"
+        echo "cluster_workspace=$CLUSTER_ISAACLAB_DIR"
+        echo
+        printf "repo_name\tremote_subdir\tlocal_path\thead_sha\tbranch\tstate\tchanged_files\n"
+    } > "$manifest_local_file"
+
+    append_repo_manifest_entry "$manifest_local_file" "IsaacLabImitation" "$local_workspace_root" "."
+
+    for spec in $SYNC_EXTRA_REPO_SPECS; do
+        local_path="${spec%%:*}"
+        remote_subdir="${spec#*:}"
+        if [ -z "$local_path" ] || [ -z "$remote_subdir" ]; then
+            continue
+        fi
+        append_repo_manifest_entry "$manifest_local_file" "$remote_subdir" "$local_path" "$remote_subdir"
+    done
+
+    ssh "$CLUSTER_LOGIN" "cat > '$manifest_remote_file'" < "$manifest_local_file"
+    echo "[INFO] Saved repo sync manifest to '$CLUSTER_LOGIN:$manifest_remote_file'"
+    rm -f "$manifest_local_file"
+}
+
 submit_job() {
 
     echo "[INFO] Arguments passed to job script ${@}"
@@ -113,12 +258,21 @@ submit_job() {
 
 sync_extra_repos() {
     local local_workspace_root
+    local sibling_workspace_root
     local local_specs
     local local_path
     local remote_subdir
 
     local_workspace_root="$(realpath "$SCRIPT_DIR/../..")"
-    local_specs="${CLUSTER_EXTRA_SYNC_SPECS:-$local_workspace_root/IsaacLab:IsaacLab $local_workspace_root/RLOpt:RLOpt $local_workspace_root/ImitationLearningTools:ImitationLearningTools}"
+    sibling_workspace_root="$(realpath "$local_workspace_root/..")"
+
+    if [ -n "${CLUSTER_EXTRA_SYNC_SPECS:-}" ]; then
+        local_specs="$CLUSTER_EXTRA_SYNC_SPECS"
+        echo "[INFO] Using CLUSTER_EXTRA_SYNC_SPECS for additional repo sync."
+    else
+        local_specs="$(build_default_sync_specs "$local_workspace_root" "$sibling_workspace_root")"
+    fi
+    SYNC_EXTRA_REPO_SPECS="$local_specs"
 
     for spec in $local_specs; do
         local_path="${spec%%:*}"
@@ -126,6 +280,10 @@ sync_extra_repos() {
         if [ -z "$local_path" ] || [ -z "$remote_subdir" ]; then
             display_warning "Ignoring invalid CLUSTER_EXTRA_SYNC_SPECS entry: '$spec'"
             continue
+        fi
+        local_path="$(realpath "$local_path" 2>/dev/null || echo "$local_path")"
+        if repo_is_dirty "$local_path"; then
+            echo "[INFO] $remote_subdir has uncommitted local changes at '$local_path'; syncing working tree state."
         fi
         sync_tree_to_cluster "$local_path" "$CLUSTER_ISAACLAB_DIR/$remote_subdir" "$remote_subdir"
     done
@@ -240,6 +398,8 @@ case $command in
         rsync -rh --exclude="*.git*" --exclude="wandb" --filter=':- .dockerignore' /$SCRIPT_DIR/../.. $CLUSTER_LOGIN:$CLUSTER_ISAACLAB_DIR
         # Sync optional extra repos (default: IsaacLab + RLOpt + ImitationLearningTools)
         sync_extra_repos
+        # Record exact repo SHAs and dirty state used in this submission.
+        record_repo_sync_manifest
         # execute job script
         echo "[INFO] Executing job script..."
         # check whether the second argument is a profile or a job argument

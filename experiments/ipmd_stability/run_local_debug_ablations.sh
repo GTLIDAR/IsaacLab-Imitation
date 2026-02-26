@@ -9,7 +9,7 @@ TASK="${TASK:-Isaac-Imitation-G1-v0}"
 NUM_ENVS="${NUM_ENVS:-128}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-300}"
 SEEDS_STR="${SEEDS:-2024}"
-COMBOS_STR="${COMBOS:-A B C D E}"
+COMBOS_STR="${COMBOS:-A B C D E F G H}"
 
 if ! command -v timeout >/dev/null 2>&1; then
     echo "[ERROR] 'timeout' command is required but not found."
@@ -99,6 +99,31 @@ E_EXTRA=(
     "agent.ipmd.bc_final_coeff=0.0"
 )
 
+F_EXTRA=(
+    "agent.ipmd.reward_updates_per_policy_update=2"
+    "agent.ipmd.reward_update_warmup_updates=500"
+    "agent.ipmd.reward_balance_policy_and_expert=true"
+    "agent.ipmd.reward_train_on_logits=true"
+)
+
+G_EXTRA=(
+    "agent.ipmd.reward_input_noise_std=0.01"
+    "agent.ipmd.reward_input_dropout_prob=0.05"
+    "agent.ipmd.reward_replay_reset_interval_updates=5000"
+)
+
+H_EXTRA=(
+    "agent.ipmd.policy_random_action_prob_start=0.05"
+    "agent.ipmd.policy_random_action_prob_end=0.0"
+    "agent.ipmd.policy_random_action_schedule_updates=10000"
+    "agent.ipmd.reward_mix_gate_abs_gap_max=0.5"
+    "agent.ipmd.reward_mix_alpha_when_gap_large=0.1"
+    "agent.ipmd.reward_scheduler=cosineannealinglr"
+    "agent.ipmd.reward_scheduler_kwargs.T_max=50000"
+    "agent.ipmd.reward_scheduler_kwargs.eta_min=5e-05"
+    "agent.ipmd.reward_scheduler_step=update"
+)
+
 get_combo_overrides() {
     local combo="$1"
     OVERRIDES=("${A_OVERRIDES[@]}")
@@ -117,8 +142,17 @@ get_combo_overrides() {
         E)
             OVERRIDES+=("${B_EXTRA[@]}" "${C_EXTRA[@]}" "${D_EXTRA[@]}" "${E_EXTRA[@]}")
             ;;
+        F)
+            OVERRIDES+=("${B_EXTRA[@]}" "${C_EXTRA[@]}" "${D_EXTRA[@]}" "${E_EXTRA[@]}" "${F_EXTRA[@]}")
+            ;;
+        G)
+            OVERRIDES+=("${B_EXTRA[@]}" "${C_EXTRA[@]}" "${D_EXTRA[@]}" "${E_EXTRA[@]}" "${F_EXTRA[@]}" "${G_EXTRA[@]}")
+            ;;
+        H)
+            OVERRIDES+=("${B_EXTRA[@]}" "${C_EXTRA[@]}" "${D_EXTRA[@]}" "${E_EXTRA[@]}" "${F_EXTRA[@]}" "${G_EXTRA[@]}" "${H_EXTRA[@]}")
+            ;;
         *)
-            echo "[ERROR] Unknown combo '$combo'. Supported combos: A B C D E"
+            echo "[ERROR] Unknown combo '$combo'. Supported combos: A B C D E F G H"
             exit 1
             ;;
     esac

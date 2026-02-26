@@ -68,3 +68,6 @@ tests/
 **/tactile_record/*
 **/gelsight_r15_data/*
 scripts/rsl_rl/__pycache__/cli_args.cpython-311.pyc
+
+# data folder
+data/

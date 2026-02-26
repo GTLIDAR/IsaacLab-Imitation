@@ -1,0 +1,22 @@
+# IsaacLabImitation/pyrefly.toml
+
+# Files that belong to this project
+project-includes = ["source/**/*.py", "scripts/**/*.py"]
+
+# Import roots for this project
+search-path = [
+  "source",                             # for isaaclab_imitation.*
+  "../IsaacLab/source/isaaclab",
+  "../IsaacLab/source/isaaclab_tasks",
+  "../IsaacLab/source/isaaclab_assets",
+  "../IsaacLab/source/isaaclab_mimic",
+  "../IsaacLab/source/isaaclab_rl",
+  "../IsaacLab/source/isaaclab_tasks",
+  "../IsaacLab/source/isaaclab_assets",
+  "../IsaacLab/source/isaaclab_mimic",
+  "../IsaacLab/source/isaaclab_rl",
+]
+
+# Optional but often useful in a monorepo
+disable-search-path-heuristics = true
+python-platform = "linux"

@@ -69,19 +69,28 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_weight_decay = 0.0
         self.ipmd.reward_max_grad_norm = 1.0
         self.ipmd.reward_update_interval = 2
+        self.ipmd.reward_updates_per_policy_update = 1
+        self.ipmd.reward_update_warmup_updates = 500
+        # Keep expert reward minibatch aligned with PPO minibatch by default.
+        self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
+        self.ipmd.reward_balance_policy_and_expert = True
 
         # Trust-region / anti-collapse reward objective.
         self.ipmd.reward_margin = 0.05
         self.ipmd.reward_consistency_coeff = 0.2
+        self.ipmd.reward_train_on_logits = True
 
         # AMP-style regularization and replay for reward learning.
         self.ipmd.normalize_reward_input = True
+        self.ipmd.reward_input_noise_std = 0.0
+        self.ipmd.reward_input_dropout_prob = 0.0
         self.ipmd.reward_grad_penalty_coeff = 0.2
         self.ipmd.reward_logit_reg_coeff = 0.02
         self.ipmd.reward_param_weight_decay_coeff = 1.0e-5
         self.ipmd.reward_replay_size = 200000
         self.ipmd.reward_replay_ratio = 0.5
         self.ipmd.reward_replay_keep_prob = 0.25
+        self.ipmd.reward_replay_reset_interval_updates = 0
 
         # Curriculum: smoothly mix env imitation reward with learned reward.
         self.ipmd.reward_mix_alpha_start = 0.0
@@ -90,12 +99,21 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_mix_gate_estimated_std_min = 0.05
         self.ipmd.reward_mix_alpha_when_unstable = 0.15
         self.ipmd.reward_mix_gate_after_updates = 500
+        self.ipmd.reward_mix_gate_abs_gap_max = 0.5
+        self.ipmd.reward_mix_alpha_when_gap_large = 0.1
 
         # Exploration and BC warm-start schedules.
         self.ipmd.entropy_coeff_start = 0.02
         self.ipmd.entropy_coeff_end = self.ppo.entropy_coeff
         self.ipmd.entropy_schedule_updates = 15000
+        self.ipmd.policy_random_action_prob_start = 0.0
+        self.ipmd.policy_random_action_prob_end = 0.0
+        self.ipmd.policy_random_action_schedule_updates = 0
+        self.ipmd.reward_scheduler = None
+        self.ipmd.reward_scheduler_kwargs = {}
+        self.ipmd.reward_scheduler_step = "update"
         self.ipmd.bc_loss_coeff = 0.02
         self.ipmd.bc_warmup_updates = 20000
         self.ipmd.bc_final_coeff = 0.0
-        self.ipmd.expert_batch_size = 10000
+
+        self.compile.compile = True

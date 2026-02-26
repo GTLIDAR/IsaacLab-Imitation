@@ -5,14 +5,18 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import json
+import logging
 import os
 import signal
 import sys
+import warnings
 from pathlib import Path
 
 from isaaclab.app import AppLauncher
+import torch
 
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+torch._logging.set_logs(all=logging.CRITICAL)
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
@@ -70,8 +74,14 @@ parser.add_argument(
     dest="algorithm",
     type=str.upper,
     default="PPO",
-    choices=["PPO", "SAC", "IPMD"],
+    choices=["PPO", "SAC", "IPMD", "GAIL", "AMP", "ASE"],
     help="RLOpt algorithm to train (must match the agent config).",
+)
+parser.add_argument(
+    "--expert_rb_dir",
+    type=str,
+    default=None,
+    help="Path to expert TorchRL replay buffer directory (required for GAIL/AMP/ASE).",
 )
 
 parser.add_argument(
@@ -116,15 +126,12 @@ signal.signal(signal.SIGINT, cleanup_pbar)
 
 """Rest everything follows."""
 
-import logging
-import os
 import random
 import time
 from datetime import datetime
 
 import gymnasium as gym
-import torch
-from rlopt.agent import IPMD, PPO, SAC
+from rlopt.agent import AMP, ASE, GAIL, IPMD, PPO, SAC
 from rlopt.config_base import RLOptConfig
 from torchrl.data import TensorDictReplayBuffer
 from torchrl.data.replay_buffers.storages import LazyMemmapStorage
@@ -160,7 +167,40 @@ ALGORITHM_CLASS_MAP = {
     "PPO": PPO,
     "SAC": SAC,
     "IPMD": IPMD,
+    "GAIL": GAIL,
+    "AMP": AMP,
+    "ASE": ASE,
 }
+
+IMITATION_ALGOS = {"GAIL", "AMP", "ASE"}
+
+
+def _infer_replay_storage_size(rb_dir: Path) -> int:
+    meta_path = rb_dir / "meta.json"
+    if not meta_path.exists():
+        return 100000
+
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return 100000
+
+    shape = meta.get("shape")
+    if isinstance(shape, list) and len(shape) > 0 and isinstance(shape[0], int):
+        return max(1, int(shape[0]))
+    return 100000
+
+
+def load_expert_replay_buffer(rb_dir: str) -> TensorDictReplayBuffer:
+    rb_path = Path(rb_dir).expanduser().resolve()
+    if not rb_path.exists():
+        raise FileNotFoundError(f"Expert replay buffer path does not exist: {rb_path}")
+
+    storage_size = _infer_replay_storage_size(rb_path)
+    storage = LazyMemmapStorage(max_size=storage_size)
+    replay_buffer = TensorDictReplayBuffer(storage=storage)
+    replay_buffer.loads(str(rb_path))
+    return replay_buffer
 
 
 def resolve_agent_cfg_entry_point(
@@ -256,15 +296,6 @@ def main(
     # set the log directory for the environment (works for all environment types)
     env_cfg.log_dir = log_dir
 
-    # Policy input keys for VecNorm.
-    _policy_cfg = getattr(agent_cfg, "policy", None)
-    if _policy_cfg is not None and hasattr(_policy_cfg, "get_input_keys"):
-        policy_in_keys = _policy_cfg.get_input_keys()
-    elif _policy_cfg is not None and _policy_cfg.input_keys is not None:
-        policy_in_keys = list(_policy_cfg.input_keys)
-    else:
-        policy_in_keys = ["policy"]
-
     # create isaac environment
     env = gym.make(
         args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None
@@ -310,14 +341,30 @@ def main(
         config=agent_cfg,  # type: ignore
     )
 
-    if isinstance(agent, IPMD):
-        rb_dir = "data/2026-02-24_16-21-10/torchrl_rb"
-        # loads() is an instance method - construct a buffer with matching storage first, then load state
-        storage = LazyMemmapStorage(max_size=10000)
-        td_buffer = TensorDictReplayBuffer(storage=storage)
-        td_buffer.loads(rb_dir)
+    rb_dir: str | None = args_cli.expert_rb_dir
+    if args_cli.algorithm in IMITATION_ALGOS and rb_dir is None:
+        raise ValueError(
+            f"`--expert_rb_dir` is required for algorithm {args_cli.algorithm}. "
+            "Provide a TorchRL replay buffer directory generated from expert demonstrations."
+        )
+
+    # Preserve historical IPMD behavior when explicit replay dir is not provided.
+    if rb_dir is None and isinstance(agent, IPMD):
+        legacy_rb_dir = Path("data/2026-02-25_14-49-07/torchrl_rb")
+        if legacy_rb_dir.exists():
+            rb_dir = str(legacy_rb_dir)
+            print(f"[INFO] Using legacy IPMD expert replay buffer at: {rb_dir}")
+
+    if rb_dir is not None:
+        td_buffer = load_expert_replay_buffer(rb_dir)
         print(f"[INFO] Loaded expert replay buffer with {len(td_buffer)} transitions")
-        agent.set_expert_buffer(td_buffer)
+        if hasattr(agent, "set_expert_buffer"):
+            agent.set_expert_buffer(td_buffer)  # type: ignore[attr-defined]
+        else:
+            logger.warning(
+                "Algorithm %s does not expose set_expert_buffer(); replay buffer was loaded but not attached.",
+                args_cli.algorithm,
+            )
 
     # run training
     agent.train()

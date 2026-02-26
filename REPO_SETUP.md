@@ -97,3 +97,16 @@ cd docker/cluster
 bash cluster_interface.sh push base
 bash cluster_interface.sh job base --headless
 ```
+
+If your active development clone for `RLOpt` (or `IsaacLab`, `ImitationLearningTools`) is outside this repo, set path overrides in `docker/cluster/.env.cluster` so cluster jobs sync your working tree directly:
+
+```bash
+CLUSTER_RLOPT_LOCAL_PATH=/absolute/path/to/RLOpt
+# Optional:
+# CLUSTER_ISAACLAB_LOCAL_PATH=/absolute/path/to/IsaacLab
+# CLUSTER_IMITATION_TOOLS_LOCAL_PATH=/absolute/path/to/ImitationLearningTools
+```
+
+These overrides are used when `CLUSTER_EXTRA_SYNC_SPECS` is not set. The paths are local paths on the submission machine.
+
+Each `job` submission also writes a repo manifest to `<CLUSTER_ISAACLAB_DIR>/repo_sync_manifest.tsv` containing SHA/branch/dirty-state for all synced repos.

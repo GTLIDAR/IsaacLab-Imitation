@@ -5,7 +5,7 @@ cat <<EOT > job.sh
 #SBATCH --gpus-per-node=rtx_6000:1
 #SBATCH -N1
 #SBATCH --mem-per-gpu=24G
-#SBATCH --time=8:00:00
+#SBATCH --time=16:00:00
 #SBATCH --job-name="training-$(date +"%Y-%m-%dT%H:%M")"
 
 # Pass the container profile first to run_singularity.sh, then all arguments intended for the executed script

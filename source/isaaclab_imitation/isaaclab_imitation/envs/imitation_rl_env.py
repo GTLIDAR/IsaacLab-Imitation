@@ -200,7 +200,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         )
 
         # Get initial reference data (this also initializes env assignments)
-        self.current_reference: TensorDict = self.trajectory_manager.sample(advance=False)
+        self.current_reference: TensorDict = self.trajectory_manager.sample(
+            advance=False
+        )
 
         # Store reference joint mapping
         self.reference_joint_names = reference_joint_names
@@ -208,7 +210,11 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self.reference_site_names: list[str] = []
         self._joint_mapping_cache: torch.Tensor | None = None
         self._reference_vel_vis_enabled = bool(
-            getattr(cfg, "visualize_reference_arrows", getattr(cfg, "visualize_reference_velocity", False))
+            getattr(
+                cfg,
+                "visualize_reference_arrows",
+                getattr(cfg, "visualize_reference_velocity", False),
+            )
         )
         self._reference_vel_marker: VisualizationMarkers | None = None
         self._reference_pos_delta_marker: VisualizationMarkers | None = None
@@ -221,7 +227,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._vis_robot_body_ids: torch.Tensor | None = None
         self._vis_body_names: list[str] = []
         self._last_tracked_root_pos_w = torch.zeros((num_envs, 3), device=device)
-        self._last_tracked_root_pos_valid = torch.zeros((num_envs,), device=device, dtype=torch.bool)
+        self._last_tracked_root_pos_valid = torch.zeros(
+            (num_envs,), device=device, dtype=torch.bool
+        )
         self.replay_reference = getattr(cfg, "replay_reference", False)
         self.replay_only = getattr(cfg, "replay_only", False)
         if self.replay_only and not self.replay_reference:
@@ -323,7 +331,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             lowered = lowered[:-5]
         return lowered
 
-    def _resolve_reference_body_visualization_pairs(self) -> tuple[torch.Tensor, torch.Tensor, list[str]] | None:
+    def _resolve_reference_body_visualization_pairs(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, list[str]] | None:
         """Resolve pairs of (reference body idx, robot body idx) to visualize."""
         if len(self.reference_body_names) == 0:
             return None
@@ -340,7 +350,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         robot_body_names = list(self.robot.body_names)
         robot_name_lookup = {name: idx for idx, name in enumerate(robot_body_names)}
-        robot_name_lookup_lower = {name.lower(): idx for idx, name in enumerate(robot_body_names)}
+        robot_name_lookup_lower = {
+            name.lower(): idx for idx, name in enumerate(robot_body_names)
+        }
         robot_normalized_lookup: dict[str, list[int]] = {}
         robot_normalized_names: list[str] = []
 
@@ -364,14 +376,20 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 if ref_body_name_lower in robot_name_lookup_lower:
                     robot_id = robot_name_lookup_lower[ref_body_name_lower]
                 else:
-                    normalized_ref_name = self._normalize_body_name_for_matching(ref_body_name)
-                    normalized_matches = robot_normalized_lookup.get(normalized_ref_name, [])
+                    normalized_ref_name = self._normalize_body_name_for_matching(
+                        ref_body_name
+                    )
+                    normalized_matches = robot_normalized_lookup.get(
+                        normalized_ref_name, []
+                    )
                     if len(normalized_matches) > 0:
                         robot_id = normalized_matches[0]
                     else:
                         prefix_matches = [
                             idx
-                            for idx, normalized_robot_name in enumerate(robot_normalized_names)
+                            for idx, normalized_robot_name in enumerate(
+                                robot_normalized_names
+                            )
                             if normalized_robot_name.startswith(normalized_ref_name)
                             or normalized_ref_name.startswith(normalized_robot_name)
                         ]
@@ -417,12 +435,17 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         init_yaw_quat = math_utils.yaw_quat(init_quat)
         ref_reset_yaw_quat = math_utils.yaw_quat(ref_reset_quat)
-        align_quat = math_utils.quat_mul(init_yaw_quat, math_utils.quat_inv(ref_reset_yaw_quat))
+        align_quat = math_utils.quat_mul(
+            init_yaw_quat, math_utils.quat_inv(ref_reset_yaw_quat)
+        )
         align_pos = init_pos - math_utils.quat_apply(align_quat, ref_reset_pos)
         return align_quat, align_pos
 
     def _transform_reference_pose_to_world(
-        self, ref_pos: torch.Tensor, ref_quat: torch.Tensor | None = None, env_ids: torch.Tensor | None = None
+        self,
+        ref_pos: torch.Tensor,
+        ref_quat: torch.Tensor | None = None,
+        env_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Apply per-episode rigid transform from reference frame to world frame."""
         align_quat, align_pos = self._get_reference_alignment_transform(env_ids)
@@ -435,31 +458,54 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             return pos_w, quat_w
 
         if ref_pos.ndim != 3:
-            raise ValueError(f"Unsupported ref_pos shape for transform: {tuple(ref_pos.shape)}")
+            raise ValueError(
+                f"Unsupported ref_pos shape for transform: {tuple(ref_pos.shape)}"
+            )
 
         num_envs, num_items = ref_pos.shape[0], ref_pos.shape[1]
-        align_quat_expand = align_quat.unsqueeze(1).expand(-1, num_items, -1).reshape(-1, 4)
-        pos_w = math_utils.quat_apply(align_quat_expand, ref_pos.reshape(-1, 3)).reshape(num_envs, num_items, 3)
+        align_quat_expand = (
+            align_quat.unsqueeze(1).expand(-1, num_items, -1).reshape(-1, 4)
+        )
+        pos_w = math_utils.quat_apply(
+            align_quat_expand, ref_pos.reshape(-1, 3)
+        ).reshape(num_envs, num_items, 3)
         pos_w = pos_w + align_pos.unsqueeze(1)
 
         if ref_quat is None:
             return pos_w, None
-        quat_w = math_utils.quat_mul(align_quat_expand, ref_quat.reshape(-1, 4)).reshape(num_envs, num_items, 4)
+        quat_w = math_utils.quat_mul(
+            align_quat_expand, ref_quat.reshape(-1, 4)
+        ).reshape(num_envs, num_items, 4)
         return pos_w, quat_w
 
     def _transform_reference_body_pose_to_init_alignment(
-        self, ref_pos: torch.Tensor, ref_quat: torch.Tensor | None = None, env_ids: torch.Tensor | None = None
+        self,
+        ref_pos: torch.Tensor,
+        ref_quat: torch.Tensor | None = None,
+        env_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Map reference body pose with reset-time alignment so global motion is preserved."""
-        return self._transform_reference_pose_to_world(ref_pos, ref_quat, env_ids=env_ids)
+        return self._transform_reference_pose_to_world(
+            ref_pos, ref_quat, env_ids=env_ids
+        )
 
-    def _reset_idx(self, env_ids: Sequence[int]):
-        """Reset the specified environments."""
+    def _reset_idx(self, env_ids: Sequence[int] | torch.Tensor):
+        """Reset the specified environments.
 
+        Notes:
+            IsaacLab managers, events, and sensors accept tensor indices and internally move
+            them to the appropriate device. We normalize ``env_ids`` to a CUDA long tensor so
+            that all internal buffers (which live on ``self.device``) and the trajectory
+            manager see consistent indexing.
+        """
+
+        # Tensor on the simulation device for indexing env-local tensors / trajectory manager.
         if not isinstance(env_ids, torch.Tensor):
-            env_ids_tensor = torch.tensor(env_ids, device=self.device, dtype=torch.int64)
+            env_ids_tensor = torch.tensor(
+                env_ids, device=self.device, dtype=torch.int64
+            )
         else:
-            env_ids_tensor = env_ids.to(dtype=torch.int64)
+            env_ids_tensor = env_ids.to(device=self.device, dtype=torch.int64)
 
         # Reset trajectory tracking (reassigns trajectories and resets steps)
         self.trajectory_manager.reset_envs(env_ids_tensor)
@@ -469,25 +515,38 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # forward an extra frame.  The per-step advance happens once in step().
         self.current_reference = self.trajectory_manager.sample(advance=False)
 
-        # Trigger the reset events
-        result = super()._reset_idx(env_ids_tensor)  # type: ignore
+        # Sync again after trajectory manager ops (CPU→CUDA transfers + indexing)
+        # torch.cuda.synchronize()
+
+        # Trigger the reset events (curriculum, sensors, managers, etc.) using tensor indices
+        result = super()._reset_idx(env_ids)  # type: ignore[arg-type]
 
         # Store initial poses for replay
-        self._init_root_pos[env_ids_tensor] = self.robot.data.root_state_w[env_ids_tensor, 0:3]
-        self._init_root_quat[env_ids_tensor] = self.robot.data.root_state_w[env_ids_tensor, 3:7]
+        self._init_root_pos[env_ids_tensor] = self.robot.data.root_state_w[
+            env_ids_tensor, 0:3
+        ]
+        self._init_root_quat[env_ids_tensor] = self.robot.data.root_state_w[
+            env_ids_tensor, 3:7
+        ]
         reference_root_pos = self.current_reference.get("root_pos")
         reference_root_quat = self.current_reference.get("root_quat")
         if reference_root_pos is not None:
-            self._reference_reset_root_pos[env_ids_tensor] = reference_root_pos[env_ids_tensor]
+            self._reference_reset_root_pos[env_ids_tensor] = reference_root_pos[
+                env_ids_tensor
+            ]
         if reference_root_quat is not None:
-            self._reference_reset_root_quat[env_ids_tensor] = reference_root_quat[env_ids_tensor]
+            self._reference_reset_root_quat[env_ids_tensor] = reference_root_quat[
+                env_ids_tensor
+            ]
 
         if self.replay_reference:
             self._replay_reference(env_ids_tensor)
 
         tracked_root_pos_w = self._get_tracked_reference_root_pos_w()
         if tracked_root_pos_w is not None:
-            self._last_tracked_root_pos_w[env_ids_tensor] = tracked_root_pos_w[env_ids_tensor]
+            self._last_tracked_root_pos_w[env_ids_tensor] = tracked_root_pos_w[
+                env_ids_tensor
+            ]
             self._last_tracked_root_pos_valid[env_ids_tensor] = True
 
         return result
@@ -639,7 +698,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         else:
             return data  # type: ignore[return-value]
 
-    def _replay_reference(self, env_ids: torch.Tensor | None = None, reference: TensorDict | None = None):
+    def _replay_reference(
+        self, env_ids: torch.Tensor | None = None, reference: TensorDict | None = None
+    ):
         """Replay the reference data. If env_ids is provided, only replay the reference data for the given environments.
         If env_ids is not provided, replay the reference data for all environments."""
 
@@ -658,10 +719,14 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             ref["root_pos"], ref["root_quat"], env_ids=env_ids
         )
         if root_quat_opt is None:
-            raise RuntimeError("Failed to transform reference root quaternion for replay.")
+            raise RuntimeError(
+                "Failed to transform reference root quaternion for replay."
+            )
         root_quat = root_quat_opt
         align_quat, _ = self._get_reference_alignment_transform(env_ids)
-        root_lin_vel = self._estimate_reference_root_lin_vel_w_from_pos(ref["root_pos"], env_ids=env_ids)
+        root_lin_vel = self._estimate_reference_root_lin_vel_w_from_pos(
+            ref["root_pos"], env_ids=env_ids
+        )
         root_ang_vel = math_utils.quat_apply(align_quat, ref["root_ang_vel"])
         root_pose = torch.cat([root_pos, root_quat], dim=-1)
         root_vel = torch.cat([root_lin_vel, root_ang_vel], dim=-1)
@@ -695,7 +760,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             return None
 
         # Apply the full per-episode rigid transform (R, t) from reset frame to world frame.
-        tracked_root_pos_w, _ = self._transform_reference_pose_to_world(reference_root_pos)
+        tracked_root_pos_w, _ = self._transform_reference_pose_to_world(
+            reference_root_pos
+        )
         return tracked_root_pos_w
 
     def _estimate_reference_root_lin_vel_w_from_pos(
@@ -706,12 +773,16 @@ class ImitationRLEnv(ManagerBasedRLEnv):
     ) -> torch.Tensor:
         """Estimate reference root linear velocity in world frame from finite differences of root position."""
         if env_ids is None:
-            tracked_root_pos_w, _ = self._transform_reference_pose_to_world(reference_root_pos)
+            tracked_root_pos_w, _ = self._transform_reference_pose_to_world(
+                reference_root_pos
+            )
             previous_pos_w = self._last_tracked_root_pos_w
             previous_valid = self._last_tracked_root_pos_valid
         else:
             env_ids_tensor = env_ids.to(dtype=torch.int64)
-            tracked_root_pos_w, _ = self._transform_reference_pose_to_world(reference_root_pos, env_ids=env_ids_tensor)
+            tracked_root_pos_w, _ = self._transform_reference_pose_to_world(
+                reference_root_pos, env_ids=env_ids_tensor
+            )
             previous_pos_w = self._last_tracked_root_pos_w[env_ids_tensor]
             previous_valid = self._last_tracked_root_pos_valid[env_ids_tensor]
 
@@ -754,7 +825,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if body_id_pairs is None:
             return
 
-        self._vis_reference_body_ids, self._vis_robot_body_ids, self._vis_body_names = body_id_pairs
+        self._vis_reference_body_ids, self._vis_robot_body_ids, self._vis_body_names = (
+            body_id_pairs
+        )
         for body_name in self._vis_body_names:
             current_body_cfg = FRAME_MARKER_CFG.copy()
             current_body_cfg.prim_path = f"/Visuals/Imitation/current_body/{body_name}"
@@ -764,7 +837,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             self._current_body_frame_markers.append(current_body_marker)
 
             goal_body_cfg = FRAME_MARKER_CFG.copy()
-            goal_body_cfg.prim_path = f"/Visuals/Imitation/reference_body_goal/{body_name}"
+            goal_body_cfg.prim_path = (
+                f"/Visuals/Imitation/reference_body_goal/{body_name}"
+            )
             goal_body_cfg.markers["frame"].scale = (0.1, 0.1, 0.1)
             goal_body_marker = VisualizationMarkers(goal_body_cfg)
             goal_body_marker.set_visibility(True)
@@ -782,20 +857,29 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         tracked_root_pos_w = self._get_tracked_reference_root_pos_w()
 
         # Desired reference body (root) location and current robot root — frame markers like unitree_rl_lab
-        if self._goal_root_frame_marker is not None and self._current_root_frame_marker is not None:
+        if (
+            self._goal_root_frame_marker is not None
+            and self._current_root_frame_marker is not None
+        ):
             ref_root_pos_w = tracked_root_pos_w
             align_quat, _ = self._get_reference_alignment_transform()
-            ref_root_quat_w = math_utils.quat_mul(align_quat, self.current_reference["root_quat"])
+            ref_root_quat_w = math_utils.quat_mul(
+                align_quat, self.current_reference["root_quat"]
+            )
             if ref_root_pos_w is not None:
-                self._goal_root_frame_marker.visualize(translations=ref_root_pos_w, orientations=ref_root_quat_w)
+                self._goal_root_frame_marker.visualize(
+                    translations=ref_root_pos_w, orientations=ref_root_quat_w
+                )
             self._current_root_frame_marker.visualize(
-                translations=self.robot.data.root_pos_w, orientations=self.robot.data.root_quat_w
+                translations=self.robot.data.root_pos_w,
+                orientations=self.robot.data.root_quat_w,
             )
 
         if (
             self._vis_reference_body_ids is not None
             and self._vis_robot_body_ids is not None
-            and len(self._goal_body_frame_markers) == len(self._current_body_frame_markers)
+            and len(self._goal_body_frame_markers)
+            == len(self._current_body_frame_markers)
             and len(self._goal_body_frame_markers) > 0
         ):
             reference_body_pos = None
@@ -809,26 +893,37 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             if reference_body_pos is not None:
                 ref_body_pos = reference_body_pos[..., self._vis_reference_body_ids, :]
                 if reference_body_quat is not None:
-                    ref_body_quat = reference_body_quat[..., self._vis_reference_body_ids, :]
+                    ref_body_quat = reference_body_quat[
+                        ..., self._vis_reference_body_ids, :
+                    ]
                 else:
                     # Keep position-only visualization alive when orientation keys are unavailable.
-                    ref_body_quat = torch.zeros((*ref_body_pos.shape[:-1], 4), device=ref_body_pos.device)
+                    ref_body_quat = torch.zeros(
+                        (*ref_body_pos.shape[:-1], 4), device=ref_body_pos.device
+                    )
                     ref_body_quat[..., 0] = 1.0
 
-                ref_body_pos_w, ref_body_quat_w_opt = self._transform_reference_body_pose_to_init_alignment(
-                    ref_body_pos, ref_body_quat
+                ref_body_pos_w, ref_body_quat_w_opt = (
+                    self._transform_reference_body_pose_to_init_alignment(
+                        ref_body_pos, ref_body_quat
+                    )
                 )
                 if ref_body_quat_w_opt is None:
                     return
                 ref_body_quat_w = ref_body_quat_w_opt
                 num_bodies = ref_body_pos.shape[1]
 
-                robot_body_pos_w = self.robot.data.body_pos_w[:, self._vis_robot_body_ids]
-                robot_body_quat_w = self.robot.data.body_quat_w[:, self._vis_robot_body_ids]
+                robot_body_pos_w = self.robot.data.body_pos_w[
+                    :, self._vis_robot_body_ids
+                ]
+                robot_body_quat_w = self.robot.data.body_quat_w[
+                    :, self._vis_robot_body_ids
+                ]
 
                 for body_index in range(num_bodies):
                     self._current_body_frame_markers[body_index].visualize(
-                        robot_body_pos_w[:, body_index], robot_body_quat_w[:, body_index]
+                        robot_body_pos_w[:, body_index],
+                        robot_body_quat_w[:, body_index],
                     )
                     self._goal_body_frame_markers[body_index].visualize(
                         ref_body_pos_w[:, body_index], ref_body_quat_w[:, body_index]
@@ -849,13 +944,21 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         actual_vel_env0 = self.robot.data.root_lin_vel_w[0]
         diff_vel_env0 = actual_vel_env0 - reference_vel_env0
 
-        self.extras["metrics/env0/reference_root_lin_vel_x"] = reference_vel_env0[0].item()
-        self.extras["metrics/env0/reference_root_lin_vel_y"] = reference_vel_env0[1].item()
-        self.extras["metrics/env0/reference_root_lin_vel_z"] = reference_vel_env0[2].item()
+        self.extras["metrics/env0/reference_root_lin_vel_x"] = reference_vel_env0[
+            0
+        ].item()
+        self.extras["metrics/env0/reference_root_lin_vel_y"] = reference_vel_env0[
+            1
+        ].item()
+        self.extras["metrics/env0/reference_root_lin_vel_z"] = reference_vel_env0[
+            2
+        ].item()
         self.extras["metrics/env0/actual_root_lin_vel_x"] = actual_vel_env0[0].item()
         self.extras["metrics/env0/actual_root_lin_vel_y"] = actual_vel_env0[1].item()
         self.extras["metrics/env0/actual_root_lin_vel_z"] = actual_vel_env0[2].item()
         self.extras["metrics/env0/root_lin_vel_diff_x"] = diff_vel_env0[0].item()
         self.extras["metrics/env0/root_lin_vel_diff_y"] = diff_vel_env0[1].item()
         self.extras["metrics/env0/root_lin_vel_diff_z"] = diff_vel_env0[2].item()
-        self.extras["metrics/env0/root_lin_vel_diff_norm"] = torch.linalg.norm(diff_vel_env0).item()
+        self.extras["metrics/env0/root_lin_vel_diff_norm"] = torch.linalg.norm(
+            diff_vel_env0
+        ).item()
