@@ -14,6 +14,9 @@ SYNC_EXTRA_REPO_SPECS=""
 CLUSTER_ISAACLAB_BASE_DIR=""
 CLUSTER_SYNC_LATEST_LINK=""
 CLUSTER_PREVIOUS_SYNC_DIR=""
+REPO_SYNC_HEAD_SHA=""
+REPO_SYNC_ORIGIN_URL=""
+REPO_SYNC_REASON=""
 
 #==
 # Functions
@@ -113,6 +116,169 @@ sync_tree_to_cluster() {
         "$CLUSTER_LOGIN:$dst_path/"
     )
     "${rsync_cmd[@]}"
+}
+
+prepare_repo_git_sync_metadata() {
+    local repo_path="$1"
+
+    REPO_SYNC_HEAD_SHA=""
+    REPO_SYNC_ORIGIN_URL=""
+    REPO_SYNC_REASON="not_git_repo"
+
+    if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        return 1
+    fi
+
+    REPO_SYNC_HEAD_SHA="$(git -C "$repo_path" rev-parse HEAD 2>/dev/null || true)"
+    if [ -z "$REPO_SYNC_HEAD_SHA" ]; then
+        REPO_SYNC_REASON="missing_head_sha"
+        return 1
+    fi
+
+    REPO_SYNC_ORIGIN_URL="$(git -C "$repo_path" remote get-url origin 2>/dev/null || true)"
+    if [ -z "$REPO_SYNC_ORIGIN_URL" ]; then
+        REPO_SYNC_REASON="missing_origin_remote"
+        return 1
+    fi
+
+    REPO_SYNC_REASON="dirty_worktree"
+    if [ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]; then
+        return 1
+    fi
+
+    REPO_SYNC_REASON="clean_git_repo"
+    return 0
+}
+
+sync_repo_from_git_to_cluster() {
+    local dst_path="$1"
+    local label="$2"
+    local origin_url="$3"
+    local head_sha="$4"
+
+    echo "[INFO] Syncing $label via git checkout: commit='$head_sha' origin='$origin_url'"
+    ssh "$CLUSTER_LOGIN" bash -s -- "$dst_path" "$origin_url" "$head_sha" <<'EOF'
+set -e
+target_dir="$1"
+origin_url="$2"
+head_sha="$3"
+
+if [ -z "$target_dir" ] || [ "$target_dir" = "/" ]; then
+    echo "[ERROR] Invalid target dir for git sync: '$target_dir'" >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname "$target_dir")"
+
+if [ -d "$target_dir/.git" ]; then
+    current_origin="$(git -C "$target_dir" remote get-url origin 2>/dev/null || true)"
+    if [ "$current_origin" != "$origin_url" ]; then
+        rm -rf "$target_dir"
+    fi
+elif [ -e "$target_dir" ]; then
+    rm -rf "$target_dir"
+fi
+
+if [ ! -d "$target_dir/.git" ]; then
+    git clone --no-checkout "$origin_url" "$target_dir"
+fi
+
+if ! git -C "$target_dir" fetch --depth 1 origin "$head_sha"; then
+    git -C "$target_dir" fetch origin "$head_sha"
+fi
+git -C "$target_dir" checkout -f "$head_sha"
+
+if [ -f "$target_dir/.gitmodules" ]; then
+    git -C "$target_dir" submodule sync --recursive || true
+    if ! git -C "$target_dir" submodule update --init --recursive --depth 1; then
+        git -C "$target_dir" submodule update --init --recursive
+    fi
+fi
+EOF
+}
+
+apply_local_git_diff_to_cluster() {
+    local src_path="$1"
+    local dst_path="$2"
+    local label="$3"
+    local has_tracked_changes=0
+    local has_untracked_changes=0
+    local first_untracked_file=""
+
+    if ! git -C "$src_path" diff --quiet HEAD --; then
+        has_tracked_changes=1
+    fi
+
+    first_untracked_file="$(git -C "$src_path" ls-files --others --exclude-standard | head -n 1)"
+    if [ -n "$first_untracked_file" ]; then
+        has_untracked_changes=1
+    fi
+
+    if [ "$has_tracked_changes" -eq 0 ] && [ "$has_untracked_changes" -eq 0 ]; then
+        echo "[INFO] No local delta to apply for '$label' after git checkout."
+        return 0
+    fi
+
+    if [ "$has_tracked_changes" -eq 1 ]; then
+        echo "[INFO] Applying tracked git diff for '$label' on cluster."
+        git -C "$src_path" diff --binary HEAD -- \
+            | ssh "$CLUSTER_LOGIN" "cd '$dst_path' && git apply --binary --whitespace=nowarn --check"
+        git -C "$src_path" diff --binary HEAD -- \
+            | ssh "$CLUSTER_LOGIN" "cd '$dst_path' && git apply --binary --whitespace=nowarn"
+    fi
+
+    if [ "$has_untracked_changes" -eq 1 ]; then
+        echo "[INFO] Syncing untracked files for '$label' via tar stream."
+        git -C "$src_path" ls-files --others --exclude-standard -z \
+            | tar -C "$src_path" --null --files-from=- --create --file=- \
+            | ssh "$CLUSTER_LOGIN" "mkdir -p '$dst_path' && tar -xf - -C '$dst_path'"
+    fi
+
+    return 0
+}
+
+sync_repo_prefer_git_then_rsync() {
+    local src_path="$1"
+    local dst_path="$2"
+    local label="$3"
+    local remote_subdir="${4:-.}"
+
+    if is_truthy "${CLUSTER_GIT_SYNC_FIRST:-1}"; then
+        if prepare_repo_git_sync_metadata "$src_path"; then
+            if sync_repo_from_git_to_cluster "$dst_path" "$label" "$REPO_SYNC_ORIGIN_URL" "$REPO_SYNC_HEAD_SHA"; then
+                return
+            fi
+            display_warning "Git sync failed for '$label'; falling back to rsync from local workspace."
+        else
+            case "$REPO_SYNC_REASON" in
+                dirty_worktree)
+                    if [ -n "$REPO_SYNC_HEAD_SHA" ] && [ -n "$REPO_SYNC_ORIGIN_URL" ]; then
+                        echo "[INFO] '$label' has local changes; cloning base commit then applying local diff."
+                        if sync_repo_from_git_to_cluster "$dst_path" "$label" "$REPO_SYNC_ORIGIN_URL" "$REPO_SYNC_HEAD_SHA" \
+                            && apply_local_git_diff_to_cluster "$src_path" "$dst_path" "$label"; then
+                            return
+                        fi
+                        display_warning "Git clone+diff apply failed for '$label'; falling back to rsync."
+                    else
+                        echo "[INFO] '$label' is dirty but missing git metadata; using rsync."
+                    fi
+                    ;;
+                missing_origin_remote)
+                    echo "[INFO] '$label' has no origin remote; using rsync."
+                    ;;
+                missing_head_sha)
+                    echo "[INFO] '$label' is missing a resolvable HEAD commit; using rsync."
+                    ;;
+                *)
+                    echo "[INFO] '$label' is not a clean git repo; using rsync."
+                    ;;
+            esac
+        fi
+    else
+        echo "[INFO] Git-first sync disabled via CLUSTER_GIT_SYNC_FIRST='${CLUSTER_GIT_SYNC_FIRST:-0}'. Using rsync for '$label'."
+    fi
+
+    sync_tree_to_cluster "$src_path" "$dst_path" "$label" "$remote_subdir"
 }
 
 dir_has_entries() {
@@ -332,7 +498,7 @@ sync_extra_repos() {
             continue
         fi
         local_path="$(realpath "$local_path" 2>/dev/null || echo "$local_path")"
-        sync_tree_to_cluster "$local_path" "$CLUSTER_ISAACLAB_DIR/$remote_subdir" "$remote_subdir" "$remote_subdir"
+        sync_repo_prefer_git_then_rsync "$local_path" "$CLUSTER_ISAACLAB_DIR/$remote_subdir" "$remote_subdir" "$remote_subdir"
     done
 }
 
@@ -445,7 +611,7 @@ case $command in
         ssh $CLUSTER_LOGIN "mkdir -p $CLUSTER_ISAACLAB_DIR"
         # Sync Isaac Lab imitation code
         echo "[INFO] Syncing IsaacLab-Imitation code..."
-        sync_tree_to_cluster "$local_workspace_root" "$CLUSTER_ISAACLAB_DIR" "IsaacLabImitation" "."
+        sync_repo_prefer_git_then_rsync "$local_workspace_root" "$CLUSTER_ISAACLAB_DIR" "IsaacLabImitation" "."
         # Sync optional extra repos (default: IsaacLab + RLOpt + ImitationLearningTools)
         sync_extra_repos
         # Record exact repo SHAs and dirty state used in this submission.

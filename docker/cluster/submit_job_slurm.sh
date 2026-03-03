@@ -10,8 +10,8 @@ cat <<EOT > job.sh
 #SBATCH --mem-per-gpu=24G
 #SBATCH --time=16:00:00
 #SBATCH --job-name="training-$(date +"%Y-%m-%dT%H:%M")"
-#SBATCH --output="output.log"
-#SBATCH --error="error.log"
+#SBATCH --output="output_%j.log"
+#SBATCH --error="error_%j.log"
 #SBATCH --nodelist=synapse,dendrite
 
 # Pass the container profile first to run_singularity.sh, then all arguments intended for the executed script
