@@ -7,13 +7,13 @@
 # Exits if error occurs
 set -e
 
-# Set tab-spaces
-tabs 4
-
 # get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 # Resolved "<local_path>:<remote_subdir>" sync specs used by the current job submission.
 SYNC_EXTRA_REPO_SPECS=""
+CLUSTER_ISAACLAB_BASE_DIR=""
+CLUSTER_SYNC_LATEST_LINK=""
+CLUSTER_PREVIOUS_SYNC_DIR=""
 
 #==
 # Functions
@@ -77,20 +77,42 @@ sync_tree_to_cluster() {
     local src_path="$1"
     local dst_path="$2"
     local label="$3"
+    local remote_subdir="${4:-.}"
+    local link_dest=""
+    local -a rsync_cmd
 
     if [ ! -d "$src_path" ]; then
         display_warning "Skipping sync for '$label': local path not found: $src_path"
         return
     fi
 
+    if [ -n "${CLUSTER_PREVIOUS_SYNC_DIR:-}" ]; then
+        if [ "$remote_subdir" = "." ]; then
+            link_dest="$CLUSTER_PREVIOUS_SYNC_DIR"
+        else
+            link_dest="$CLUSTER_PREVIOUS_SYNC_DIR/$remote_subdir"
+        fi
+    fi
+
     echo "[INFO] Syncing $label from '$src_path' -> '$CLUSTER_LOGIN:$dst_path'"
     ssh "$CLUSTER_LOGIN" "mkdir -p '$dst_path'"
-    rsync -rh \
-        --exclude="*.git*" \
-        --exclude="wandb" \
-        --filter=':- .dockerignore' \
-        "$src_path/" \
+    rsync_cmd=(
+        rsync -rh
+        --exclude="*.git*"
+        --exclude="wandb"
+        --filter=':- .dockerignore'
+    )
+
+    if [ -n "$link_dest" ] && ssh "$CLUSTER_LOGIN" "[ -d '$link_dest' ]"; then
+        echo "[INFO]   Using incremental sync base: '$link_dest'"
+        rsync_cmd+=("--link-dest=$link_dest")
+    fi
+
+    rsync_cmd+=(
+        "$src_path/"
         "$CLUSTER_LOGIN:$dst_path/"
+    )
+    "${rsync_cmd[@]}"
 }
 
 dir_has_entries() {
@@ -101,12 +123,40 @@ dir_has_entries() {
     [ -n "$(find "$dir_path" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]
 }
 
-repo_is_dirty() {
-    local repo_path="$1"
-    if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        return 1
+is_truthy() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+init_incremental_sync_state() {
+    CLUSTER_SYNC_LATEST_LINK="${CLUSTER_ISAACLAB_BASE_DIR}_latest"
+    CLUSTER_PREVIOUS_SYNC_DIR=""
+
+    if ! is_truthy "${CLUSTER_INCREMENTAL_SYNC:-1}"; then
+        echo "[INFO] Incremental sync disabled via CLUSTER_INCREMENTAL_SYNC='${CLUSTER_INCREMENTAL_SYNC:-0}'."
+        return
     fi
-    [ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]
+
+    if ssh "$CLUSTER_LOGIN" "[ -d '$CLUSTER_SYNC_LATEST_LINK' ]"; then
+        CLUSTER_PREVIOUS_SYNC_DIR="$CLUSTER_SYNC_LATEST_LINK"
+        echo "[INFO] Incremental sync enabled (base: '$CLUSTER_PREVIOUS_SYNC_DIR')."
+    else
+        echo "[INFO] Incremental sync enabled, but no previous snapshot found. Doing full sync."
+    fi
+}
+
+update_latest_sync_link() {
+    if ! is_truthy "${CLUSTER_INCREMENTAL_SYNC:-1}"; then
+        return
+    fi
+    ssh "$CLUSTER_LOGIN" "ln -sfn '$CLUSTER_ISAACLAB_DIR' '$CLUSTER_SYNC_LATEST_LINK'"
+    echo "[INFO] Updated latest sync link: '$CLUSTER_LOGIN:$CLUSTER_SYNC_LATEST_LINK' -> '$CLUSTER_ISAACLAB_DIR'"
 }
 
 resolve_repo_sync_path() {
@@ -282,10 +332,7 @@ sync_extra_repos() {
             continue
         fi
         local_path="$(realpath "$local_path" 2>/dev/null || echo "$local_path")"
-        if repo_is_dirty "$local_path"; then
-            echo "[INFO] $remote_subdir has uncommitted local changes at '$local_path'; syncing working tree state."
-        fi
-        sync_tree_to_cluster "$local_path" "$CLUSTER_ISAACLAB_DIR/$remote_subdir" "$remote_subdir"
+        sync_tree_to_cluster "$local_path" "$CLUSTER_ISAACLAB_DIR/$remote_subdir" "$remote_subdir" "$remote_subdir"
     done
 }
 
@@ -373,6 +420,7 @@ case $command in
         scp $SCRIPT_DIR/exports/isaac-lab-$profile.tar $CLUSTER_LOGIN:$CLUSTER_SIF_PATH/isaac-lab-$profile.tar
         ;;
     job)
+        local_workspace_root="$(realpath "$SCRIPT_DIR/../..")"
         if [ $# -ge 1 ]; then
             passed_profile=$1
             if [ -f "$SCRIPT_DIR/../.env.$passed_profile" ]; then
@@ -385,21 +433,25 @@ case $command in
         [ -n "$profile" ] && echo -e "\tUsing profile: $profile"
         [ -n "$job_args" ] && echo -e "\tJob arguments: $job_args"
         source $SCRIPT_DIR/.env.cluster
+        CLUSTER_ISAACLAB_BASE_DIR="$CLUSTER_ISAACLAB_DIR"
         # Get current date and time
         current_datetime=$(date +"%Y%m%d_%H%M%S")
         # Append current date and time to CLUSTER_ISAACLAB_DIR
-        CLUSTER_ISAACLAB_DIR="${CLUSTER_ISAACLAB_DIR}_${current_datetime}"
+        CLUSTER_ISAACLAB_DIR="${CLUSTER_ISAACLAB_BASE_DIR}_${current_datetime}"
+        init_incremental_sync_state
         # Check if singularity image exists on the remote host
         check_singularity_image_exists isaac-lab-$profile
         # make sure target directory exists
         ssh $CLUSTER_LOGIN "mkdir -p $CLUSTER_ISAACLAB_DIR"
         # Sync Isaac Lab imitation code
         echo "[INFO] Syncing IsaacLab-Imitation code..."
-        rsync -rh --exclude="*.git*" --exclude="wandb" --filter=':- .dockerignore' /$SCRIPT_DIR/../.. $CLUSTER_LOGIN:$CLUSTER_ISAACLAB_DIR
+        sync_tree_to_cluster "$local_workspace_root" "$CLUSTER_ISAACLAB_DIR" "IsaacLabImitation" "."
         # Sync optional extra repos (default: IsaacLab + RLOpt + ImitationLearningTools)
         sync_extra_repos
         # Record exact repo SHAs and dirty state used in this submission.
         record_repo_sync_manifest
+        # Refresh latest snapshot pointer used by incremental sync on future submissions.
+        update_latest_sync_link
         # execute job script
         echo "[INFO] Executing job script..."
         # check whether the second argument is a profile or a job argument

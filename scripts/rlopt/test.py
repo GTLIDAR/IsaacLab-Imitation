@@ -106,7 +106,7 @@ from isaaclab_tasks.utils.hydra import hydra_task_config
 import isaaclab_imitation.tasks  # noqa: F401
 
 from omegaconf import OmegaConf
-from isaaclab_imitation.envs.torchrl import IsaacLabWrapper
+from isaaclab_imitation.envs.rlopt import IsaacLabWrapper
 
 from rlopt.envs.gymlike import make_isaaclab_gym_env
 from rlopt.agent.ppo import PPO

@@ -367,6 +367,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         used_robot_ids: set[int] = set()
 
         for ref_id, ref_body_name in enumerate(self.reference_body_names):
+            if ref_id >= num_reference_bodies:
+                continue
             robot_id: int | None = None
 
             if ref_body_name in robot_name_lookup:
@@ -489,7 +491,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             ref_pos, ref_quat, env_ids=env_ids
         )
 
-    def _reset_idx(self, env_ids: Sequence[int] | torch.Tensor):
+    def _reset_idx(self, env_ids: torch.Tensor):
         """Reset the specified environments.
 
         Notes:
@@ -498,56 +500,51 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             that all internal buffers (which live on ``self.device``) and the trajectory
             manager see consistent indexing.
         """
-
-        # Tensor on the simulation device for indexing env-local tensors / trajectory manager.
-        if not isinstance(env_ids, torch.Tensor):
-            env_ids_tensor = torch.tensor(
-                env_ids, device=self.device, dtype=torch.int64
-            )
-        else:
-            env_ids_tensor = env_ids.to(device=self.device, dtype=torch.int64)
+        env_ids = env_ids.to(device=self.device, dtype=torch.long).contiguous()
 
         # Reset trajectory tracking (reassigns trajectories and resets steps)
-        self.trajectory_manager.reset_envs(env_ids_tensor)
+        self.trajectory_manager.reset_envs(env_ids.clone())
 
         # Get initial reference data for all envs (manager handles indexing).
         # IMPORTANT: advance=False here so that non-reset envs are NOT pushed
         # forward an extra frame.  The per-step advance happens once in step().
-        self.current_reference = self.trajectory_manager.sample(advance=False)
+        self.current_reference = self.trajectory_manager.sample(
+            env_ids=None, advance=False
+        )
 
-        # Sync again after trajectory manager ops (CPU→CUDA transfers + indexing)
-        # torch.cuda.synchronize()
+        # # For some reason, without this, the reset will crash and throw CUDA memory errors
+        # self.scene.update(dt=0.0)
+        torch.cuda.synchronize()
 
         # Trigger the reset events (curriculum, sensors, managers, etc.) using tensor indices
         result = super()._reset_idx(env_ids)  # type: ignore[arg-type]
 
-        # Store initial poses for replay
-        self._init_root_pos[env_ids_tensor] = self.robot.data.root_state_w[
-            env_ids_tensor, 0:3
-        ]
-        self._init_root_quat[env_ids_tensor] = self.robot.data.root_state_w[
-            env_ids_tensor, 3:7
-        ]
+        # torch.cuda.synchronize()
+
+        # Store initial poses for replay/alignment.
+        reset_root_state_w = self.robot.data.root_state_w.index_select(0, env_ids)
+        self._init_root_pos.index_copy_(0, env_ids, reset_root_state_w[:, 0:3])
+        self._init_root_quat.index_copy_(0, env_ids, reset_root_state_w[:, 3:7])
+
         reference_root_pos = self.current_reference.get("root_pos")
         reference_root_quat = self.current_reference.get("root_quat")
         if reference_root_pos is not None:
-            self._reference_reset_root_pos[env_ids_tensor] = reference_root_pos[
-                env_ids_tensor
-            ]
+            self._reference_reset_root_pos.index_copy_(
+                0, env_ids, reference_root_pos.index_select(0, env_ids)
+            )
         if reference_root_quat is not None:
-            self._reference_reset_root_quat[env_ids_tensor] = reference_root_quat[
-                env_ids_tensor
-            ]
-
+            self._reference_reset_root_quat.index_copy_(
+                0, env_ids, reference_root_quat.index_select(0, env_ids)
+            )
         if self.replay_reference:
-            self._replay_reference(env_ids_tensor)
+            self._replay_reference(env_ids)
 
         tracked_root_pos_w = self._get_tracked_reference_root_pos_w()
         if tracked_root_pos_w is not None:
-            self._last_tracked_root_pos_w[env_ids_tensor] = tracked_root_pos_w[
-                env_ids_tensor
-            ]
-            self._last_tracked_root_pos_valid[env_ids_tensor] = True
+            self._last_tracked_root_pos_w.index_copy_(
+                0, env_ids, tracked_root_pos_w.index_select(0, env_ids)
+            )
+            self._last_tracked_root_pos_valid.index_fill_(0, env_ids, True)
 
         return result
 
@@ -556,10 +553,11 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # Standard RL stepping path.
         if not self.replay_only:
             # Get next reference data point (advance=True to move to next step)
-            self.current_reference = self.trajectory_manager.sample(advance=True)
+            self.current_reference = self.trajectory_manager.sample(
+                env_ids=None, advance=True
+            )
             step_return = super().step(action)
-            self._update_reference_velocity_visualizer()
-            self._update_env0_velocity_metrics()
+            # self._update_reference_velocity_visualizer()
             return step_return
 
         # Replay-only path: ignore physics stepping and evaluate rewards exactly
@@ -570,7 +568,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # Sample the current reference frame and advance the internal step by exactly one.
         # `sample(advance=True)` returns frame t and then increments to t+1.
         # This avoids double-advance while keeping reward computation aligned with frame t.
-        reference_for_step = self.trajectory_manager.sample(advance=True)
+        reference_for_step = self.trajectory_manager.sample(env_ids=None, advance=True)
         self.current_reference = reference_for_step
         self._replay_reference(reference=reference_for_step)
         self.scene.update(dt=0.0)
@@ -622,7 +620,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             # trigger recorder terms for pre-reset calls
             self.recorder_manager.record_pre_reset(reset_env_ids_list)
 
-            self._reset_idx(reset_env_ids_list)
+            self._reset_idx(reset_env_ids)
 
             # if sensors are added to the scene, make sure we render to reflect changes in reset
             if self.sim.has_rtx_sensors() and self.cfg.num_rerenders_on_reset > 0:

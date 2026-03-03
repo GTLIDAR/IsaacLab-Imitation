@@ -1,6 +1,5 @@
 from isaaclab.utils import configclass
-
-from isaaclab_rl.rlopt import IPMDRLOptConfig
+from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig, RLOptConfig
 
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
     G1_POLICY_OBS_KEYS,
@@ -93,8 +92,8 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_replay_reset_interval_updates = 5000
 
         # Curriculum: smoothly mix env imitation reward with learned reward.
-        self.ipmd.reward_mix_alpha_start = 0.0
-        self.ipmd.reward_mix_alpha_end = 1.0
+        self.ipmd.reward_mix_alpha_start = 0.5
+        self.ipmd.reward_mix_alpha_end = 0.5
         self.ipmd.reward_mix_anneal_updates = 20000
         self.ipmd.reward_mix_gate_estimated_std_min = 0.05
         self.ipmd.reward_mix_alpha_when_unstable = 0.15
@@ -112,8 +111,10 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_scheduler = None
         self.ipmd.reward_scheduler_kwargs = {}
         self.ipmd.reward_scheduler_step = "update"
-        self.ipmd.bc_loss_coeff = 0.02
-        self.ipmd.bc_warmup_updates = 20000
+        self.ipmd.bc_loss_coeff = 0.00
+        self.ipmd.bc_warmup_updates = 0
         self.ipmd.bc_final_coeff = 0.0
 
-        self.compile.compile = True
+        self.compile.compile = False
+
+        self.trainer.progress_bar = True

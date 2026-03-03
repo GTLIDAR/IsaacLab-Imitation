@@ -5,7 +5,7 @@ project-includes = ["source/**/*.py", "scripts/**/*.py"]
 
 # Import roots for this project
 search-path = [
-  "source",                             # for isaaclab_imitation.*
+  "source/isaaclab_imitation",               # for isaaclab_imitation.*
   "../IsaacLab/source/isaaclab",
   "../IsaacLab/source/isaaclab_tasks",
   "../IsaacLab/source/isaaclab_assets",
@@ -15,6 +15,8 @@ search-path = [
   "../IsaacLab/source/isaaclab_assets",
   "../IsaacLab/source/isaaclab_mimic",
   "../IsaacLab/source/isaaclab_rl",
+  "../unitree_rl_lab/source/unitree_rl_lab",
+  "../loco-mujoco/loco_mujoco",
 ]
 
 # Optional but often useful in a monorepo

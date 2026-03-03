@@ -134,7 +134,7 @@ import gymnasium as gym
 from rlopt.agent import AMP, ASE, GAIL, IPMD, PPO, SAC
 from rlopt.config_base import RLOptConfig
 from torchrl.data import TensorDictReplayBuffer
-from torchrl.data.replay_buffers.storages import LazyMemmapStorage
+from torchrl.data.replay_buffers.storages import LazyMemmapStorage, LazyTensorStorage
 from torchrl.envs import (
     Compose,
     RewardSum,
@@ -151,7 +151,7 @@ from isaaclab.envs import (
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 
-from isaaclab_imitation.envs.torchrl import IsaacLabTerminalObsReader, IsaacLabWrapper
+from isaaclab_imitation.envs.rlopt import IsaacLabTerminalObsReader, IsaacLabWrapper
 
 import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
@@ -191,14 +191,18 @@ def _infer_replay_storage_size(rb_dir: Path) -> int:
     return 100000
 
 
-def load_expert_replay_buffer(rb_dir: str) -> TensorDictReplayBuffer:
+def load_expert_replay_buffer(
+    rb_dir: str, mini_batch_size: int
+) -> TensorDictReplayBuffer:
     rb_path = Path(rb_dir).expanduser().resolve()
     if not rb_path.exists():
         raise FileNotFoundError(f"Expert replay buffer path does not exist: {rb_path}")
 
     storage_size = _infer_replay_storage_size(rb_path)
-    storage = LazyMemmapStorage(max_size=storage_size)
-    replay_buffer = TensorDictReplayBuffer(storage=storage)
+    storage = LazyTensorStorage(device="cuda", max_size=storage_size)
+    replay_buffer = TensorDictReplayBuffer(
+        storage=storage, prefetch=3, batch_size=mini_batch_size
+    )
     replay_buffer.loads(str(rb_path))
     return replay_buffer
 
@@ -356,7 +360,7 @@ def main(
             print(f"[INFO] Using legacy IPMD expert replay buffer at: {rb_dir}")
 
     if rb_dir is not None:
-        td_buffer = load_expert_replay_buffer(rb_dir)
+        td_buffer = load_expert_replay_buffer(rb_dir, agent_cfg.loss.mini_batch_size)
         print(f"[INFO] Loaded expert replay buffer with {len(td_buffer)} transitions")
         if hasattr(agent, "set_expert_buffer"):
             agent.set_expert_buffer(td_buffer)  # type: ignore[attr-defined]
