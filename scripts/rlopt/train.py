@@ -10,13 +10,13 @@ import logging
 import os
 import signal
 import sys
-import warnings
 from pathlib import Path
 
-from isaaclab.app import AppLauncher
 import torch
+from isaaclab.app import AppLauncher
 
 torch._logging.set_logs(all=logging.CRITICAL)
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
@@ -131,17 +131,8 @@ import time
 from datetime import datetime
 
 import gymnasium as gym
-from rlopt.agent import AMP, ASE, GAIL, IPMD, PPO, SAC
-from rlopt.config_base import RLOptConfig
-from torchrl.data import TensorDictReplayBuffer
-from torchrl.data.replay_buffers.storages import LazyMemmapStorage, LazyTensorStorage
-from torchrl.envs import (
-    Compose,
-    RewardSum,
-    StepCounter,
-    TransformedEnv,
-)
-
+import isaaclab_imitation.tasks  # noqa: F401
+import isaaclab_tasks  # noqa: F401
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -150,12 +141,18 @@ from isaaclab.envs import (
 )
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
-
 from isaaclab_imitation.envs.rlopt import IsaacLabTerminalObsReader, IsaacLabWrapper
-
-import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils.hydra import hydra_task_config
-import isaaclab_imitation.tasks  # noqa: F401
+from rlopt.agent import AMP, ASE, GAIL, IPMD, PPO, SAC
+from rlopt.config_base import RLOptConfig
+from torchrl.data import TensorDictReplayBuffer
+from torchrl.data.replay_buffers.storages import LazyTensorStorage
+from torchrl.envs import (
+    Compose,
+    RewardSum,
+    StepCounter,
+    TransformedEnv,
+)
 
 torch.set_float32_matmul_precision("high")
 

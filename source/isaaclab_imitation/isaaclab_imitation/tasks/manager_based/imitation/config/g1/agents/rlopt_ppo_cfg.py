@@ -1,7 +1,6 @@
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rlopt import PPORLOptConfig
-
+from isaaclab_imitation.envs.rlopt import PPORLOptConfig
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
     G1_POLICY_OBS_KEYS,
     G1_VALUE_OBS_KEYS,
@@ -16,7 +15,9 @@ class G1ImitationRLOptPPOConfig(PPORLOptConfig):
         super().__post_init__()
 
         assert isinstance(self, PPORLOptConfig)
-        assert self.value_function is not None, "Value function configuration must be provided."
+        assert self.value_function is not None, (
+            "Value function configuration must be provided."
+        )
 
         self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
         self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)

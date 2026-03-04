@@ -3,12 +3,10 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import isaaclab.utils.math as math_utils
 import numpy as np
 import torch
 import zarr
-from tensordict import TensorDict
-
-import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation
 from isaaclab.envs.common import VecEnvStepReturn
 from isaaclab.envs.manager_based_rl_env import ManagerBasedRLEnv
@@ -16,6 +14,7 @@ from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import (
     FRAME_MARKER_CFG,
 )
+from tensordict import TensorDict
 
 # Import the new manager and utilities
 try:
@@ -500,7 +499,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             that all internal buffers (which live on ``self.device``) and the trajectory
             manager see consistent indexing.
         """
-        env_ids = env_ids.to(device=self.device, dtype=torch.long).contiguous()
 
         # Reset trajectory tracking (reassigns trajectories and resets steps)
         self.trajectory_manager.reset_envs(env_ids.clone())
@@ -512,14 +510,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             env_ids=None, advance=False
         )
 
-        # # For some reason, without this, the reset will crash and throw CUDA memory errors
-        # self.scene.update(dt=0.0)
-        torch.cuda.synchronize()
-
         # Trigger the reset events (curriculum, sensors, managers, etc.) using tensor indices
         result = super()._reset_idx(env_ids)  # type: ignore[arg-type]
-
-        # torch.cuda.synchronize()
 
         # Store initial poses for replay/alignment.
         reset_root_state_w = self.robot.data.root_state_w.index_select(0, env_ids)

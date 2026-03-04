@@ -10,7 +10,7 @@ NUM_ENVS="${NUM_ENVS:-2048}"
 ALGO="${ALGO:-ipmd}"
 PRESET="${PRESET:-baseline}"
 SEEDS_STR="${SEEDS:-2024 2025 2026}"
-COMBOS_STR="${COMBOS:-A B C D E F G H}"
+COMBOS_STR="${COMBOS:-A B C D E F G}"
 EXPERT_RB_DIR="${EXPERT_RB_DIR:-}"
 DRY_RUN="${DRY_RUN:-0}"
 VIDEO="${VIDEO:-1}"
@@ -99,18 +99,6 @@ G_EXTRA=(
     "agent.ipmd.reward_replay_reset_interval_updates=5000"
 )
 
-H_EXTRA=(
-    "agent.ipmd.policy_random_action_prob_start=0.05"
-    "agent.ipmd.policy_random_action_prob_end=0.0"
-    "agent.ipmd.policy_random_action_schedule_updates=10000"
-    "agent.ipmd.reward_mix_gate_abs_gap_max=0.5"
-    "agent.ipmd.reward_mix_alpha_when_gap_large=0.1"
-    "agent.ipmd.reward_scheduler=cosineannealinglr"
-    "agent.ipmd.reward_scheduler_kwargs.T_max=50000"
-    "agent.ipmd.reward_scheduler_kwargs.eta_min=5e-05"
-    "agent.ipmd.reward_scheduler_step=update"
-)
-
 GAIL_BASELINE_OVERRIDES=(
     "agent.gail.discriminator_input_keys=[invrwd]"
     "agent.gail.discriminator_updates_per_policy_update=2"
@@ -196,11 +184,8 @@ get_combo_overrides() {
         G)
             OVERRIDES+=("${B_EXTRA[@]}" "${C_EXTRA[@]}" "${D_EXTRA[@]}" "${E_EXTRA[@]}" "${F_EXTRA[@]}" "${G_EXTRA[@]}")
             ;;
-        H)
-            OVERRIDES+=("${B_EXTRA[@]}" "${C_EXTRA[@]}" "${D_EXTRA[@]}" "${E_EXTRA[@]}" "${F_EXTRA[@]}" "${G_EXTRA[@]}" "${H_EXTRA[@]}")
-            ;;
         *)
-            echo "[ERROR] Unknown combo '$combo'. Supported combos: A B C D E F G H"
+            echo "[ERROR] Unknown combo '$combo'. Supported combos: A B C D E F G"
             exit 1
             ;;
     esac

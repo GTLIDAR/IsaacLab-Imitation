@@ -6,15 +6,14 @@
 from __future__ import annotations
 
 from collections import deque
-import os
 
 import gymnasium as gym
 import torch
 from rlopt.agent import (
+    FastTD3RLOptConfig,
     IPMDRLOptConfig,
     PPORLOptConfig,
     SACRLOptConfig,
-    FastTD3RLOptConfig,
 )  # noqa: F401
 from rlopt.config_base import RLOptConfig
 from torchrl.data.tensor_specs import Bounded, Composite, Unbounded
@@ -23,8 +22,6 @@ from torchrl.envs.libs.gym import (
     _gym_to_torchrl_spec_transform,
     terminal_obs_reader,
 )
-
-from isaaclab.envs import ManagerBasedRLEnv
 
 
 def _flatten_obs(obs: dict) -> dict:
@@ -206,17 +203,9 @@ class IsaacLabWrapper(GymWrapper):
         #  in-place. We clone them here to make sure data doesn't inadvertently get modified.
         # The variable naming follows torchrl's convention here.
         observations, reward, terminated, truncated, info = step_outputs_tuple
-        if isinstance(info, dict) and "log" in info:
-            self.log_infos.append(info["log"])
-
-        if torch.isnan(reward).any():
-            raise ValueError(
-                "NaN values found in reward during step. "
-                "This is likely due to an error in the environment or the model."
-            )
+        # self.log_infos.append(info)
 
         done = terminated | truncated
-        reward = reward.unsqueeze(-1).to(dtype=torch.float32)  # to get to (num_envs, 1)
 
         # IsaacLab emits Gymnasium-style keys: final_obs / final_info.
         # Keep only terminal entries to avoid introducing scalar log info into
@@ -226,17 +215,17 @@ class IsaacLabWrapper(GymWrapper):
         if isinstance(info, dict) and "final_obs" in info:
             info = {"final_obs": info["final_obs"]}
             return (
-                obs,
-                reward,
-                terminated.to(dtype=torch.bool),
-                truncated.to(dtype=torch.bool),
-                done.to(dtype=torch.bool),
+                CloneObsBuf(obs),
+                reward.clone().unsqueeze(-1),
+                terminated.clone().to(dtype=torch.bool),
+                truncated.clone().to(dtype=torch.bool),
+                done.clone().to(dtype=torch.bool),
                 info,
             )
         else:
             return (
-                obs,
-                reward,
+                CloneObsBuf(obs),
+                reward.clone().unsqueeze(-1),
                 terminated.clone().to(dtype=torch.bool),
                 truncated.clone().to(dtype=torch.bool),
                 done.clone().to(dtype=torch.bool),
@@ -246,7 +235,8 @@ class IsaacLabWrapper(GymWrapper):
     def _reset_output_transform(self, reset_data):
         """Transform the output of the reset method."""
         observations, info = reset_data
-        return (_flatten_obs(CloneObsBuf(observations)), {})
+        # self.log_infos.append(info)
+        return (CloneObsBuf(_flatten_obs(observations)), {})
 
 
 def CloneObsBuf(
