@@ -203,7 +203,7 @@ class IsaacLabWrapper(GymWrapper):
         #  in-place. We clone them here to make sure data doesn't inadvertently get modified.
         # The variable naming follows torchrl's convention here.
         observations, reward, terminated, truncated, info = step_outputs_tuple
-        # self.log_infos.append(info)
+        self.log_infos.append(info)
 
         done = terminated | truncated
 
@@ -235,7 +235,7 @@ class IsaacLabWrapper(GymWrapper):
     def _reset_output_transform(self, reset_data):
         """Transform the output of the reset method."""
         observations, info = reset_data
-        # self.log_infos.append(info)
+        self.log_infos.append(info)
         return (CloneObsBuf(_flatten_obs(observations)), {})
 
 

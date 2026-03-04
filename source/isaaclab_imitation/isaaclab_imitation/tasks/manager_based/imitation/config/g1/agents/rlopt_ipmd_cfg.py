@@ -1,6 +1,6 @@
 from isaaclab.utils import configclass
-from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig, RLOptConfig
 
+from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig, RLOptConfig
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
     G1_POLICY_OBS_KEYS,
     G1_REWARD_OBS_KEYS,
@@ -118,3 +118,4 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.compile.compile = False
 
         self.trainer.progress_bar = False
+        self.ipmd.reward_output_scale = 0.25
