@@ -1,7 +1,0 @@
-{
-  "task": "Isaac-Imitation-G1-v0",
-  "num_envs": 10,
-  "max_steps": 1000,
-  "device": "cuda:0",
-  "log_dir": "/home/fwu/Documents/Research/SkillLearning/IsaacLabImitation/logs/reference_replay/Isaac-Imitation-G1-v0/2026-02-24_16-21-10"
-}
