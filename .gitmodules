@@ -1,9 +1,12 @@
 [submodule "IsaacLab"]
 	path = IsaacLab
 	url = https://github.com/isaac-sim/IsaacLab.git
+	branch = main
 [submodule "RLOpt"]
 	path = RLOpt
 	url = https://github.com/fei-yang-wu/RLOpt.git
+	branch = main
 [submodule "ImitationLearningTools"]
 	path = ImitationLearningTools
 	url = https://github.com/GTLIDAR/ImitationLearningTools.git
+	branch = main
