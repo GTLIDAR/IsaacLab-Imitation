@@ -1,145 +1,227 @@
-# Template for Isaac Lab Projects
+# IsaacLab-Imitation
 
-## Overview
+IsaacLab-Imitation is a multi-repo workspace for humanoid imitation learning on top of Isaac Lab. This repository
+contains the Isaac Lab extension code for the imitation environments, while the workspace also vendors the
+`IsaacLab`, `RLOpt`, and `ImitationLearningTools` repositories as git submodules.
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+The current focus is manager-based imitation environments for the Unitree G1 robot, with training flows built around
+RLOpt and RSL-RL.
 
-**Key Features:**
+## What is in this repo
 
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
+- `source/isaaclab_imitation`: the installable Isaac Lab extension package
+- `scripts/rlopt`: training and playback entrypoints for RLOpt
+- `scripts/rsl_rl`: training entrypoints for RSL-RL
+- `scripts/zero_agent.py`, `scripts/random_agent.py`: smoke-test environment runners
+- `IsaacLab/`, `RLOpt/`, `ImitationLearningTools/`: required submodule checkouts
+- `docker/cluster`: cluster submission utilities
 
-**Keywords:** extension, template, isaaclab
+Registered task IDs currently include:
 
-## Repository setup for this workspace
+- `Isaac-Imitation-G1-LafanTrack-v0`
+- `Isaac-Imitation-G1-Dance102-Compare-v0`
+- `Isaac-Imitation-G1-v0`
+- `Isaac-Imitation-G1-Dance102-v0`
 
-For the multi-repo workspace setup (IsaacLab, RLOpt, ImitationLearningTools), required [`unitree_rl_lab`](https://github.com/unitreerobotics/unitree_rl_lab)
-checkout/setup, and cluster submission notes,
-see [REPO_SETUP.md](REPO_SETUP.md).
+## Workspace setup
 
-[`unitree_rl_lab`](https://github.com/unitreerobotics/unitree_rl_lab) is required for training scripts and Docker/cluster workflows in this repo.
-Please follow the setup steps in the upstream [`unitree_rl_lab`](https://github.com/unitreerobotics/unitree_rl_lab) README as part of your local setup.
+Clone with submodules:
+
+```bash
+git clone --recurse-submodules git@github.com:GTLIDAR/IsaacLab-Imitation.git
+cd IsaacLab-Imitation
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+This workspace also expects `unitree_rl_lab` as a sibling checkout for training and cluster workflows:
+
+```bash
+cd ..
+git clone https://github.com/unitreerobotics/unitree_rl_lab.git
+cd IsaacLab-Imitation
+```
+
+You also need to complete the upstream `unitree_rl_lab` setup, not just clone it. Follow the installation and asset
+setup steps in `../unitree_rl_lab/README.md` before running training or mimic-style data workflows in this repo.
+
+More detail on remotes, submodules, and cluster sync lives in [REPO_SETUP.md](REPO_SETUP.md).
 
 ## Installation
 
-- Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
-  We recommend using the conda or uv installation as it simplifies calling Python scripts from the terminal.
-  For cluster submission through `docker/cluster`, a local conda/venv is not required.
+Use the workspace installer:
 
-- Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
+```bash
+./scripts/install_workspace.sh
+```
 
-- Using a python interpreter that has Isaac Lab installed, install the library in editable mode using:
+The script does the following:
 
-    ```bash
-    # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/isaaclab_imitation
+- verifies the active `python` is `3.11`
+- installs `uv` with `conda install -y uv`
+- initializes git submodules if `IsaacLab`, `RLOpt`, or `ImitationLearningTools` are incomplete
+- installs `ImitationLearningTools` and `RLOpt` in editable mode
+- installs `isaacsim[all,extscache]==5.1.0`
+- installs `torch==2.7.0` and `torchvision==0.22.0` from the CUDA 12.8 wheel index
+- runs `./isaaclab.sh -i none` inside `IsaacLab`
+- installs `source/isaaclab_imitation` in editable mode
 
-- Verify that the extension is correctly installed by:
+If you need the manual submodule setup details or cluster notes, see [REPO_SETUP.md](REPO_SETUP.md).
 
-    - Listing the available tasks:
+## Running training
 
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
+Examples below assume you are running from the repository root.
 
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/list_envs.py
-        ```
+Train a G1 imitation policy with RLOpt IPMD:
 
-    - Running a task:
+```bash
+./IsaacLab/isaaclab.sh -p scripts/rlopt/train.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --algo IPMD \
+    --headless
+```
 
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/<RL_LIBRARY>/train.py --task=<TASK_NAME>
-        ```
+Train with RLOpt PPO:
 
-    - Running a task with dummy agents:
+```bash
+./IsaacLab/isaaclab.sh -p scripts/rlopt/train.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --algo PPO \
+    --headless
+```
 
-        These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly.
+Train with RSL-RL:
 
-        - Zero-action agent
+```bash
+./IsaacLab/isaaclab.sh -p scripts/rsl_rl/train.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --headless
+```
 
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/zero_agent.py --task=<TASK_NAME>
-            ```
-        - Random-action agent
+Common flags:
 
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/random_agent.py --task=<TASK_NAME>
-            ```
+- `--task`: selects the registered Isaac Lab environment
+- `--num_envs`: overrides the environment count from config
+- `--max_iterations`: caps training iterations
+- `--video`: records periodic rollout videos during training
+- `--device cuda:0`: pins execution to a specific GPU
 
-### Set up IDE (Optional)
+Logs are written under `logs/`.
 
-To setup the IDE, please follow these instructions:
+## Data preparation
 
-- Run VSCode Tasks, by pressing `Ctrl+Shift+P`, selecting `Tasks: Run Task` and running the `setup_python_env` in the drop down menu.
-  When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.
+`unitree_rl_lab` is part of the expected local setup for two reasons:
 
-If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
-The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
-This helps in indexing all the python modules for intelligent suggestions while writing code.
+- some training and evaluation flows depend on its robot/task assets and config
+- the dance mimic data conversion pipeline uses its `scripts/mimic/csv_to_npz.py` converter
 
-### Setup as Omniverse Extension (Optional)
+For dance tasks that use mimic motion data, convert the source CSV into NPZ before running the task.
 
-We provide an example UI extension that will load upon enabling your extension defined in `source/isaaclab_imitation/isaaclab_imitation/ui_extension_example.py`.
+The bundled `dance_102` CSV lives at:
 
-To enable your extension, follow these steps:
+```text
+../unitree_rl_lab/source/unitree_rl_lab/unitree_rl_lab/tasks/mimic/robots/g1_29dof/dance_102/G1_Take_102.bvh_60hz.csv
+```
 
-1. **Add the search path of this project/repository** to the extension manager:
-    - Navigate to the extension manager using `Window` -> `Extensions`.
-    - Click on the **Hamburger Icon**, then go to `Settings`.
-    - In the `Extension Search Paths`, enter the absolute path to the `source` directory of this project/repository.
-    - If not already present, in the `Extension Search Paths`, enter the path that leads to Isaac Lab's extension directory directory (`IsaacLab/source`)
-    - Click on the **Hamburger Icon**, then click `Refresh`.
+Run the converter like this:
 
-2. **Search and enable your extension**:
-    - Find your extension under the `Third Party` category.
-    - Toggle it to enable your extension.
+```bash
+python ../unitree_rl_lab/scripts/mimic/csv_to_npz.py \
+    --input_file ../unitree_rl_lab/source/unitree_rl_lab/unitree_rl_lab/tasks/mimic/robots/g1_29dof/dance_102/G1_Take_102.bvh_60hz.csv
+```
 
-## Code formatting
+This generates the `.npz` file next to the CSV, in the same directory.
 
-We have a pre-commit template to automatically format your code.
-To install pre-commit:
+For `dance_102`, the generated output is:
+
+```text
+../unitree_rl_lab/source/unitree_rl_lab/unitree_rl_lab/tasks/mimic/robots/g1_29dof/dance_102/G1_Take_102.bvh_60hz.npz
+```
+
+If you are preparing a larger set of CSV motions for the LAFAN-style loader in this repo, use:
+
+```bash
+python scripts/prepare_lafan1_from_csv.py \
+    --csv_dir /absolute/path/to/csv_motions \
+    --npz_dir /absolute/path/to/npz_motions \
+    --manifest_path /absolute/path/to/g1_lafan1_manifest.json \
+    --recursive
+```
+
+## Playback and smoke tests
+
+Run a zero-action smoke test:
+
+```bash
+./IsaacLab/isaaclab.sh -p scripts/zero_agent.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0
+```
+
+Run a random-action smoke test:
+
+```bash
+./IsaacLab/isaaclab.sh -p scripts/random_agent.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0
+```
+
+Play back an RLOpt checkpoint:
+
+```bash
+./IsaacLab/isaaclab.sh -p scripts/rlopt/play.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --checkpoint /absolute/path/to/checkpoint.pt
+```
+
+## Development workflow
+
+This repo is easier to work on with terminal-first tooling than with heavy IDE indexing.
+
+Recommended tools:
+
+- `ruff` for linting and formatting
+- `pyrefly` for type and import checking
+
+Install them into your environment or with `uv tool`:
+
+```bash
+uv tool install ruff
+uv tool install pyrefly
+```
+
+Useful commands:
+
+```bash
+ruff check .
+ruff format .
+pyrefly check
+```
+
+`pyrefly` is configured by [pyrefly.toml](pyrefly.toml) and already includes
+the import roots for this repo plus sibling/source dependencies such as `IsaacLab` and `unitree_rl_lab`.
+
+For VS Code, prefer the Ruff extension and terminal-based `pyrefly` checks. Pylance is not the recommended workflow for
+this workspace because the Isaac / Omniverse dependency tree is large, generated settings tend to drift, and static
+analysis is more reliable here when driven from the checked-in repo configuration.
+
+## Formatting and hooks
+
+A pre-commit configuration is included:
 
 ```bash
 pip install pre-commit
-```
-
-Then you can run pre-commit with:
-
-```bash
 pre-commit run --all-files
 ```
 
-## Troubleshooting
+Note that the current hook set is inherited from upstream Isaac Lab conventions. For day-to-day work in this repo,
+`ruff` and `pyrefly` are the recommended feedback loop.
 
-### Pylance Missing Indexing of Extensions
+## Cluster note
 
-In some VsCode versions, the indexing of part of the extensions is missing.
-In this case, add the path to your extension in `.vscode/settings.json` under the key `"python.analysis.extraPaths"`.
-
-```json
-{
-    "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/isaaclab_imitation"
-    ]
-}
-```
-
-### Pylance Crash
-
-If you encounter a crash in `pylance`, it is probable that too many files are indexed and you run out of memory.
-A possible solution is to exclude some of omniverse packages that are not used in your project.
-To do so, modify `.vscode/settings.json` and comment out packages under the key `"python.analysis.extraPaths"`
-Some examples of packages that can likely be excluded are:
-
-```json
-"<path-to-isaac-sim>/extscache/omni.anim.*"         // Animation packages
-"<path-to-isaac-sim>/extscache/omni.kit.*"          // Kit UI tools
-"<path-to-isaac-sim>/extscache/omni.graph.*"        // Graph UI tools
-"<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
-...
-```
+For cluster submission, local Isaac Lab Python installation is not required on the submission machine if jobs run inside
+the provided container or Apptainer image. See `docker/cluster` and [REPO_SETUP.md](REPO_SETUP.md) for the expected sync
+layout and environment variables.
