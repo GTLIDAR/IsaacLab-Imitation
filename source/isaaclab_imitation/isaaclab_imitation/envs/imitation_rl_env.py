@@ -1,7 +1,8 @@
 import shutil
 from collections.abc import Sequence
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import isaaclab.utils.math as math_utils
 import numpy as np
@@ -15,6 +16,10 @@ from isaaclab.markers.config import (
     FRAME_MARKER_CFG,
 )
 from tensordict import TensorDict
+
+
+logger = logging.getLogger(__name__)
+NestedKey: TypeAlias = str | tuple[str, ...]
 
 # Import the new manager and utilities
 try:
@@ -233,6 +238,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self.replay_only = getattr(cfg, "replay_only", False)
         if self.replay_only and not self.replay_reference:
             self.replay_reference = True
+        self._expert_sampler_warned_action_fallback = False
+        self._expert_sampler_warned_unknown_terms: set[str] = set()
 
         # Store initial poses for replay
         self._init_root_pos = torch.zeros((num_envs, 3), device=device)
@@ -687,6 +694,201 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 return data[..., joint_indices]  # type: ignore[return-value]
         else:
             return data  # type: ignore[return-value]
+
+    @staticmethod
+    def _normalize_nested_key(key: NestedKey) -> tuple[str, ...]:
+        """Normalize a nested key to tuple form."""
+        if isinstance(key, tuple):
+            return key
+        return (key,)
+
+    @staticmethod
+    def _denormalize_nested_key(key_parts: tuple[str, ...]) -> NestedKey:
+        """Convert tuple-form key back to str when single-token."""
+        if len(key_parts) == 1:
+            return key_parts[0]
+        return key_parts
+
+    def _sample_reference_batch_for_expert(
+        self, batch_size: int
+    ) -> tuple[TensorDict, torch.Tensor]:
+        """Sample random reference states without advancing env manager state."""
+        if batch_size <= 0:
+            raise ValueError("batch_size must be > 0.")
+
+        tm = self.trajectory_manager
+        tm_device = tm.env_traj_rank.device
+        env_ids_tm = torch.randint(
+            low=0,
+            high=self.num_envs,
+            size=(batch_size,),
+            device=tm_device,
+            dtype=torch.int64,
+        )
+        traj_ranks = tm.env_traj_rank[env_ids_tm]
+        lengths = tm._length[traj_ranks].clamp(min=1)
+        random_steps = torch.floor(
+            torch.rand(batch_size, device=tm_device) * lengths.to(dtype=torch.float32)
+        ).to(dtype=torch.int64)
+        global_indices = (tm._start[traj_ranks] + random_steps).clamp(
+            min=tm._start[traj_ranks], max=tm._end[traj_ranks] - 1
+        )
+
+        reference = tm.rb[global_indices]
+        if getattr(tm, "_device", None) is not None:
+            reference = reference.to(tm._device)
+        reference = tm._attach_reference_fields(
+            reference, traj_ranks=traj_ranks, use_buffers=False
+        )
+
+        return reference.to(self.device), env_ids_tm.to(self.device)
+
+    def _reference_obs_by_term(
+        self, reference: TensorDict, env_ids: torch.Tensor
+    ) -> dict[str, torch.Tensor]:
+        """Convert sampled reference data to observation-compatible tensors."""
+        env_ids = env_ids.to(dtype=torch.int64, device=self.device)
+        root_pos_w, root_quat_w_opt = self._transform_reference_pose_to_world(
+            reference["root_pos"], reference["root_quat"], env_ids=env_ids
+        )
+        if root_quat_w_opt is None:
+            raise RuntimeError(
+                "Failed to transform reference quaternion for expert sampling."
+            )
+        root_quat_w = root_quat_w_opt
+        env_origins = self.scene.env_origins.index_select(0, env_ids)
+        root_pos = root_pos_w - env_origins
+        align_quat, _ = self._get_reference_alignment_transform(env_ids)
+        root_lin_vel = math_utils.quat_apply(align_quat, reference["root_lin_vel"])
+        root_ang_vel = math_utils.quat_apply(align_quat, reference["root_ang_vel"])
+
+        return {
+            "joint_pos": reference["joint_pos"],
+            "joint_vel": reference["joint_vel"],
+            "root_pos": root_pos,
+            "root_quat": root_quat_w,
+            "root_lin_vel": root_lin_vel,
+            "root_ang_vel": root_ang_vel,
+            # Backward-compatible aliases.
+            "base_lin_vel": root_lin_vel,
+            "base_ang_vel": root_ang_vel,
+        }
+
+    def _reference_to_requested_obs(
+        self,
+        reference: TensorDict,
+        env_ids: torch.Tensor,
+        obs_keys: Sequence[NestedKey],
+    ) -> dict[NestedKey, torch.Tensor] | None:
+        """Map requested nested observation keys to tensors from sampled reference."""
+        term_values = self._reference_obs_by_term(reference, env_ids)
+        mapped_values: dict[NestedKey, torch.Tensor] = {}
+        unknown_terms: list[str] = []
+
+        for obs_key in obs_keys:
+            key_tuple = self._normalize_nested_key(obs_key)
+            term_name = key_tuple[-1]
+            value = term_values.get(term_name)
+            if value is None:
+                unknown_terms.append(term_name)
+                continue
+            mapped_values[obs_key] = value
+
+        if len(unknown_terms) > 0:
+            for term_name in unknown_terms:
+                if term_name in self._expert_sampler_warned_unknown_terms:
+                    continue
+                logger.warning(
+                    "Expert sampler cannot provide term '%s' from trajectory manager.",
+                    term_name,
+                )
+                self._expert_sampler_warned_unknown_terms.add(term_name)
+            return None
+
+        return mapped_values
+
+    def sample_expert_batch(
+        self, batch_size: int, required_keys: Sequence[NestedKey]
+    ) -> TensorDict | None:
+        """Sample an expert batch for imitation algorithms from trajectory manager."""
+        if batch_size <= 0:
+            return None
+        if len(required_keys) == 0:
+            return TensorDict({}, batch_size=[batch_size], device=self.device)
+
+        dedup_required_keys = list(dict.fromkeys(required_keys))
+        current_obs_keys: list[NestedKey] = []
+        next_obs_keys: list[NestedKey] = []
+        needs_action = False
+
+        for key in dedup_required_keys:
+            key_tuple = self._normalize_nested_key(key)
+            if key_tuple == ("action",):
+                needs_action = True
+                continue
+            if len(key_tuple) > 0 and key_tuple[0] == "next":
+                if len(key_tuple) < 2:
+                    continue
+                next_obs_keys.append(self._denormalize_nested_key(key_tuple[1:]))
+                continue
+            current_obs_keys.append(self._denormalize_nested_key(key_tuple))
+
+        expert_batch = TensorDict({}, batch_size=[batch_size], device=self.device)
+        current_reference: TensorDict | None = None
+
+        if len(current_obs_keys) > 0:
+            current_reference, current_env_ids = (
+                self._sample_reference_batch_for_expert(batch_size)
+            )
+            mapped_current = self._reference_to_requested_obs(
+                current_reference, current_env_ids, current_obs_keys
+            )
+            if mapped_current is None:
+                return None
+            for key, value in mapped_current.items():
+                expert_batch.set(key, value)
+
+        if len(next_obs_keys) > 0:
+            next_reference, next_env_ids = self._sample_reference_batch_for_expert(
+                batch_size
+            )
+            mapped_next = self._reference_to_requested_obs(
+                next_reference, next_env_ids, next_obs_keys
+            )
+            if mapped_next is None:
+                return None
+            for key, value in mapped_next.items():
+                key_tuple = self._normalize_nested_key(key)
+                expert_batch.set(("next", *key_tuple), value)
+            if current_reference is None:
+                current_reference = next_reference
+
+        if needs_action:
+            sampled_action = None
+            if current_reference is not None and "action" in current_reference.keys():
+                sampled_action = current_reference.get("action")
+            if sampled_action is None:
+                if not self._expert_sampler_warned_action_fallback:
+                    logger.warning(
+                        "Expert sampler action unavailable; using zero-action fallback."
+                    )
+                    self._expert_sampler_warned_action_fallback = True
+                action_space = getattr(
+                    self, "single_action_space", getattr(self, "action_space", None)
+                )
+                action_shape = (
+                    tuple(int(dim) for dim in action_space.shape)
+                    if action_space is not None and getattr(action_space, "shape", None)
+                    else (1,)
+                )
+                sampled_action = torch.zeros(
+                    (batch_size, *action_shape),
+                    device=self.device,
+                    dtype=torch.float32,
+                )
+            expert_batch.set("action", sampled_action.to(self.device))
+
+        return expert_batch
 
     def _replay_reference(
         self, env_ids: torch.Tensor | None = None, reference: TensorDict | None = None

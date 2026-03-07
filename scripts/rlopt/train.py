@@ -5,7 +5,6 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-import json
 import logging
 import os
 import signal
@@ -16,7 +15,6 @@ import torch
 from isaaclab.app import AppLauncher
 
 torch._logging.set_logs(all=logging.CRITICAL)
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 # add argparse arguments
 parser = argparse.ArgumentParser(
@@ -36,6 +34,18 @@ parser.add_argument(
     type=int,
     default=2000,
     help="Interval between video recordings (in steps).",
+)
+parser.add_argument(
+    "--video_width",
+    type=int,
+    default=None,
+    help="Optional video render width override (applies to env viewer resolution).",
+)
+parser.add_argument(
+    "--video_height",
+    type=int,
+    default=None,
+    help="Optional video render height override (applies to env viewer resolution).",
 )
 parser.add_argument(
     "--num_envs", type=int, default=None, help="Number of environments to simulate."
@@ -77,13 +87,6 @@ parser.add_argument(
     choices=["PPO", "SAC", "IPMD", "GAIL", "AMP", "ASE"],
     help="RLOpt algorithm to train (must match the agent config).",
 )
-parser.add_argument(
-    "--expert_rb_dir",
-    type=str,
-    default=None,
-    help="Path to expert TorchRL replay buffer directory (required for GAIL/AMP/ASE).",
-)
-
 parser.add_argument(
     "--ray-proc-id",
     "-rid",
@@ -133,6 +136,7 @@ from datetime import datetime
 import gymnasium as gym
 import isaaclab_imitation.tasks  # noqa: F401
 import isaaclab_tasks  # noqa: F401
+import numpy as np
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -144,15 +148,16 @@ from isaaclab.utils.io import dump_yaml
 from isaaclab_imitation.envs.rlopt import IsaacLabTerminalObsReader, IsaacLabWrapper
 from isaaclab_tasks.utils.hydra import hydra_task_config
 from rlopt.agent import AMP, ASE, GAIL, IPMD, PPO, SAC
-from rlopt.config_base import RLOptConfig
-from torchrl.data import TensorDictReplayBuffer
-from torchrl.data.replay_buffers.storages import LazyTensorStorage
+from rlopt.config_base import RLOptConfig, TrainerConfig
 from torchrl.envs import (
     Compose,
+    ExcludeTransform,
     RewardSum,
     StepCounter,
     TransformedEnv,
 )
+from torchrl.record import PixelRenderTransform, VideoRecorder
+from torchrl.record.loggers.csv import CSVLogger
 
 torch.set_float32_matmul_precision("high")
 
@@ -169,39 +174,134 @@ ALGORITHM_CLASS_MAP = {
     "ASE": ASE,
 }
 
-IMITATION_ALGOS = {"GAIL", "AMP", "ASE"}
+
+class StepTriggeredPixelRenderTransform(PixelRenderTransform):
+    """Pixel renderer that only calls env.render() during trigger windows."""
+
+    def __init__(
+        self,
+        *,
+        video_interval: int,
+        video_length: int,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.video_interval = max(1, int(video_interval))
+        self.video_length = max(1, min(int(video_length), self.video_interval))
+        self.global_step = 0
+        self._dump_callback = None
+
+    def set_dump_callback(self, callback) -> None:
+        """Register a callback invoked when a capture window has just closed."""
+        self._dump_callback = callback
+
+    def _should_render(self, step_idx: int) -> bool:
+        return (step_idx % self.video_interval) < self.video_length
+
+    def _drop_pixels_key(self, tensordict) -> None:
+        # Ensure stale frames are not reused outside active capture windows.
+        try:
+            tensordict.del_(self.out_keys[0])
+        except KeyError:
+            pass
+        except Exception:
+            pass
+
+    def _maybe_dump_closed_window(self, step_idx: int) -> None:
+        if self._dump_callback is None:
+            return
+        phase = step_idx % self.video_interval
+        window_start_step = None
+        if self.video_length < self.video_interval:
+            if phase == self.video_length:
+                window_start_step = step_idx - phase
+        else:
+            # Continuous rendering mode: close previous interval on boundary.
+            if step_idx > 0 and phase == 0:
+                window_start_step = step_idx - self.video_interval
+        if window_start_step is None:
+            return
+        self._dump_callback(int(window_start_step))
+
+    def _call(self, next_tensordict):
+        # Dump exactly when the previous capture window closes.
+        self._maybe_dump_closed_window(self.global_step)
+        if self._should_render(self.global_step):
+            out = super()._call(next_tensordict)
+        else:
+            self._drop_pixels_key(next_tensordict)
+            out = next_tensordict
+        self.global_step += 1
+        return out
+
+    def _reset(self, tensordict, tensordict_reset):
+        # Do not advance global step on reset; trigger windows are step-based.
+        # if self._should_render(self.global_step):
+        #     return super()._call(tensordict_reset)
+        self._drop_pixels_key(tensordict_reset)
+        return tensordict_reset
+
+    def transform_observation_spec(self, observation_spec):
+        # Preserve step counter while probing spec during initialization.
+        step = self.global_step
+        try:
+            return super().transform_observation_spec(observation_spec)
+        finally:
+            self.global_step = step
 
 
-def _infer_replay_storage_size(rb_dir: Path) -> int:
-    meta_path = rb_dir / "meta.json"
-    if not meta_path.exists():
-        return 100000
+def _render_frame_to_numpy(frame):
+    """Convert render outputs to contiguous CPU uint8 arrays for video logging."""
+    if isinstance(frame, list):
+        if len(frame) == 0:
+            return np.zeros((1, 1, 3), dtype=np.uint8)
+        frame = frame[-1]
+    if isinstance(frame, torch.Tensor):
+        frame = frame.detach()
+        if frame.is_cuda:
+            frame = frame.to("cpu")
+        if frame.dtype != torch.uint8:
+            frame = frame.to(torch.uint8)
+        frame = frame.numpy()
+    else:
+        frame = np.asarray(frame)
+        if frame.dtype != np.uint8:
+            frame = frame.astype(np.uint8, copy=False)
+    return np.ascontiguousarray(frame)
 
-    try:
-        meta = json.loads(meta_path.read_text())
-    except Exception:
-        return 100000
 
-    shape = meta.get("shape")
-    if isinstance(shape, list) and len(shape) > 0 and isinstance(shape[0], int):
-        return max(1, int(shape[0]))
-    return 100000
+def _infer_render_fps(env: object, default_fps: int = 30) -> int:
+    """Infer render FPS from env metadata (falls back to default_fps)."""
+    stack: list[object] = [env]
+    visited: set[int] = set()
+    while len(stack) > 0:
+        current = stack.pop()
+        obj_id = id(current)
+        if obj_id in visited:
+            continue
+        visited.add(obj_id)
 
+        metadata = getattr(current, "metadata", None)
+        if isinstance(metadata, dict):
+            fps = metadata.get("render_fps")
+            try:
+                if fps is not None and float(fps) > 0:
+                    return max(1, int(round(float(fps))))
+            except Exception:
+                pass
 
-def load_expert_replay_buffer(
-    rb_dir: str, mini_batch_size: int
-) -> TensorDictReplayBuffer:
-    rb_path = Path(rb_dir).expanduser().resolve()
-    if not rb_path.exists():
-        raise FileNotFoundError(f"Expert replay buffer path does not exist: {rb_path}")
-
-    storage_size = _infer_replay_storage_size(rb_path)
-    storage = LazyTensorStorage(device="cuda", max_size=storage_size)
-    replay_buffer = TensorDictReplayBuffer(
-        storage=storage, prefetch=3, batch_size=mini_batch_size
-    )
-    replay_buffer.loads(str(rb_path))
-    return replay_buffer
+        for attr_name in ("base_env", "env", "_env", "unwrapped"):
+            try:
+                next_obj = getattr(current, attr_name, None)
+            except Exception:
+                continue
+            if next_obj is None:
+                continue
+            if isinstance(next_obj, (list, tuple)):
+                stack.extend(next_obj)
+            else:
+                stack.append(next_obj)
+    return max(1, int(default_fps))
 
 
 def resolve_agent_cfg_entry_point(
@@ -253,6 +353,9 @@ def main(
     agent_cfg.env.num_envs = env_cfg.scene.num_envs
     agent_cfg.env.env_name = args_cli.task
     agent_cfg.seed = args_cli.seed if args_cli.seed is not None else agent_cfg.seed
+    if agent_cfg.trainer is None:
+        agent_cfg.trainer = TrainerConfig()
+    agent_cfg.trainer.log_interval = max(1, int(args_cli.log_interval))
     # max iterations for training
     if args_cli.max_iterations is not None:
         agent_cfg.collector.total_frames = (
@@ -308,18 +411,6 @@ def main(
             "DirectMARLEnv is not supported for RLOpt training yet."
         )
 
-    # wrap for video recording
-    if args_cli.video:
-        video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "train"),
-            "step_trigger": lambda step: step % args_cli.video_interval == 0,
-            "video_length": args_cli.video_length,
-            "disable_logger": True,
-        }
-        print("[INFO] Recording videos during training.")
-        print_dict(video_kwargs, nesting=4)
-        env = gym.wrappers.RecordVideo(env, **video_kwargs)  # type: ignore
-
     start_time = time.time()
 
     env = IsaacLabWrapper(env)  # type: ignore
@@ -335,37 +426,70 @@ def main(
             StepCounter(1000),  # type: ignore
         ),
     )
+    if args_cli.video:
+        # Follow TorchRL recorder docs:
+        # PixelRenderTransform + VideoRecorder, and periodic dump during training.
+        video_fps = _infer_render_fps(env, default_fps=30)
+        video_kwargs = {
+            "video_log_dir": os.path.join(log_dir, "videos"),
+            "video_exp_name": "train",
+            "video_interval": int(args_cli.video_interval),
+            "video_length": int(args_cli.video_length),
+            "video_sampling_stride": 1,
+            "video_fps": video_fps,
+            "viewer_resolution": (
+                tuple(env_cfg.viewer.resolution)
+                if hasattr(env_cfg, "viewer") and hasattr(env_cfg.viewer, "resolution")
+                else None
+            ),
+        }
+        print("[INFO] Recording videos during training with TorchRL VideoRecorder.")
+        print_dict(video_kwargs, nesting=4)
+        video_logger = CSVLogger(
+            exp_name=video_kwargs["video_exp_name"],
+            log_dir=video_kwargs["video_log_dir"],
+            video_format="mp4",
+            video_fps=video_kwargs["video_fps"],
+        )
+        pixel_render = StepTriggeredPixelRenderTransform(
+            video_interval=video_kwargs["video_interval"],
+            video_length=video_kwargs["video_length"],
+            out_keys=["pixels"],
+            preproc=_render_frame_to_numpy,
+            as_non_tensor=True,
+        )
+        env.append_transform(pixel_render)
+        video_recorder = VideoRecorder(
+            logger=video_logger,
+            tag="train",
+            in_keys=["pixels"],
+            skip=video_kwargs["video_sampling_stride"],
+            make_grid=False,
+            fps=video_kwargs["video_fps"],
+        )
+        # Rendering is step-triggered; allow missing pixel keys outside active windows.
+        video_recorder.set_missing_tolerance(True)
+
+        def _dump_triggered_clip(window_start_step: int) -> None:
+            # Avoid empty dumps: CSV logger increments counters even on empty writes.
+            if len(getattr(video_recorder, "obs", [])) == 0:
+                return
+            video_recorder.dump(suffix=f"step_{window_start_step}")
+
+        pixel_render.set_dump_callback(_dump_triggered_clip)
+        env.append_transform(video_recorder)
+        # Keep recorder-only keys out of collector/replay-buffer payloads.
+        env.append_transform(ExcludeTransform("pixels"))
+        env._video_recording_cfg = {  # type: ignore[attr-defined]
+            "video_interval": video_kwargs["video_interval"],
+            "step_managed": True,
+        }
 
     agent_class = ALGORITHM_CLASS_MAP[args_cli.algorithm]
     agent = agent_class(
         env=env,
         config=agent_cfg,  # type: ignore
     )
-
-    rb_dir: str | None = args_cli.expert_rb_dir
-    if args_cli.algorithm in IMITATION_ALGOS and rb_dir is None:
-        raise ValueError(
-            f"`--expert_rb_dir` is required for algorithm {args_cli.algorithm}. "
-            "Provide a TorchRL replay buffer directory generated from expert demonstrations."
-        )
-
-    # Preserve historical IPMD behavior when explicit replay dir is not provided.
-    if rb_dir is None and isinstance(agent, IPMD):
-        legacy_rb_dir = Path("data/2026-02-25_14-49-07/torchrl_rb")
-        if legacy_rb_dir.exists():
-            rb_dir = str(legacy_rb_dir)
-            print(f"[INFO] Using legacy IPMD expert replay buffer at: {rb_dir}")
-
-    if rb_dir is not None:
-        td_buffer = load_expert_replay_buffer(rb_dir, agent_cfg.loss.mini_batch_size)
-        print(f"[INFO] Loaded expert replay buffer with {len(td_buffer)} transitions")
-        if hasattr(agent, "set_expert_buffer"):
-            agent.set_expert_buffer(td_buffer)  # type: ignore[attr-defined]
-        else:
-            logger.warning(
-                "Algorithm %s does not expose set_expert_buffer(); replay buffer was loaded but not attached.",
-                args_cli.algorithm,
-            )
 
     # run training
     agent.train()

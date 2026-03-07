@@ -8,7 +8,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -132,9 +132,63 @@ G1_UNDESIRED_CONTACT_PATTERN = (
 )
 
 # Observation keys used by rlopt configs.
-G1_POLICY_OBS_KEYS: list[str] = ["policy"]
-G1_VALUE_OBS_KEYS: list[str] = ["critic"]
-G1_REWARD_OBS_KEYS: list[str] = ["invrwd"]
+ObsKey: TypeAlias = str | tuple[str, ...]
+
+
+def _compose_obs_keys(group_name: str, term_names: list[str]) -> list[ObsKey]:
+    """Compose nested observation keys from group and term names."""
+    return [(group_name, term_name) for term_name in term_names]
+
+
+G1_POLICY_OBS_TERM_NAMES: list[str] = [
+    "reference_motion",
+    "reference_anchor_ori_b",
+    "base_ang_vel",
+    "joint_pos_rel",
+    "joint_vel_rel",
+    "last_action",
+]
+G1_POLICY_OBS_KEYS: list[ObsKey] = _compose_obs_keys("policy", G1_POLICY_OBS_TERM_NAMES)
+
+G1_VALUE_OBS_TERM_NAMES: list[str] = [
+    "reference_motion",
+    "reference_anchor_pos_b",
+    "reference_anchor_ori_b",
+    "body_pos",
+    "body_ori",
+    "base_lin_vel",
+    "base_ang_vel",
+    "joint_pos",
+    "joint_vel",
+    "actions",
+]
+G1_VALUE_OBS_KEYS: list[ObsKey] = _compose_obs_keys("critic", G1_VALUE_OBS_TERM_NAMES)
+
+# GAIL/AMP/ASE discriminator inputs use the same key-based kinematic subset as
+# IPMD reward estimation so expert batches can be streamed from trajectory manager.
+G1_REWARD_OBS_KEYS: list[ObsKey] = _compose_obs_keys(
+    "ipmd_rwd",
+    [
+        "joint_pos",
+        "joint_vel",
+        "root_pos",
+        "root_quat",
+        "root_lin_vel",
+        "root_ang_vel",
+    ],
+)
+
+G1_IPMD_REWARD_OBS_TERM_NAMES: list[str] = [
+    "joint_pos",
+    "joint_vel",
+    "root_pos",
+    "root_quat",
+    "root_lin_vel",
+    "root_ang_vel",
+]
+G1_IPMD_REWARD_OBS_KEYS: list[ObsKey] = _compose_obs_keys(
+    "ipmd_rwd", G1_IPMD_REWARD_OBS_TERM_NAMES
+)
 
 
 def _resolve_workspace_path(*parts: str) -> str:
@@ -360,7 +414,7 @@ class G1ObservationCfg:
 
         def __post_init__(self):
             self.enable_corruption = True
-            self.concatenate_terms = True
+            self.concatenate_terms = False
 
     @configclass
     class CriticCfg(ObsGroup):
@@ -417,33 +471,13 @@ class G1ObservationCfg:
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
         actions = ObsTerm(func=mdp.last_action)
 
+        def __post_init__(self):
+            self.concatenate_terms = False
+
     @configclass
     class RewardCfg(ObsGroup):
         """Privileged critic observations."""
 
-        reference_motion = ObsTerm(
-            func=mdp.reference_motion_command,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=G1_29DOF_JOINT_NAMES,
-                )
-            },
-        )
-        reference_anchor_pos_b = ObsTerm(
-            func=mdp.reference_anchor_pos_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
-        )
-        reference_anchor_ori_b = ObsTerm(
-            func=mdp.reference_anchor_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
-        )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
             params={
@@ -471,9 +505,24 @@ class G1ObservationCfg:
         joint_pos = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel = ObsTerm(func=mdp.joint_vel_rel)
 
+    @configclass
+    class IPMDRewardCfg(ObsGroup):
+        """IPMD reward-estimation kinematic observations."""
+
+        joint_pos = ObsTerm(func=mdp.joint_pos)
+        joint_vel = ObsTerm(func=mdp.joint_vel)
+        root_pos = ObsTerm(func=mdp.root_pos_w)
+        root_quat = ObsTerm(func=mdp.root_quat_w)
+        root_lin_vel = ObsTerm(func=mdp.root_lin_vel_w)
+        root_ang_vel = ObsTerm(func=mdp.root_ang_vel_w)
+
+        def __post_init__(self):
+            self.concatenate_terms = False
+
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     invrwd: RewardCfg = RewardCfg()
+    ipmd_rwd: IPMDRewardCfg = IPMDRewardCfg()
 
 
 @configclass

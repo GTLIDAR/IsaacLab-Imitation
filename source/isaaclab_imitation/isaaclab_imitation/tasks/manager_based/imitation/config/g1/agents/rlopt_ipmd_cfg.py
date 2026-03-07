@@ -2,8 +2,8 @@ from isaaclab.utils import configclass
 
 from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig, RLOptConfig
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
+    G1_IPMD_REWARD_OBS_KEYS,
     G1_POLICY_OBS_KEYS,
-    G1_REWARD_OBS_KEYS,
     G1_VALUE_OBS_KEYS,
 )
 
@@ -22,7 +22,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
 
         self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
         self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
-        self.ipmd.reward_input_keys = list(G1_REWARD_OBS_KEYS)
+        self.ipmd.reward_input_keys = list(G1_IPMD_REWARD_OBS_KEYS)
 
         # More initial exploration to improve policy-state coverage for inverse reward.
         self.collector.init_random_frames = 49152
@@ -57,23 +57,31 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
 
         self.ipmd.reward_input_type = "s'"
         self.ipmd.use_estimated_rewards_for_ppo = True
-        self.ipmd.use_reward_target_network = True
-        self.ipmd.use_reward_target_for_ppo = True
-        self.ipmd.reward_target_polyak = 0.995
-        self.ipmd.reward_target_update_interval = 1
+        # self.ipmd.use_reward_target_network = True
+        # self.ipmd.use_reward_target_for_ppo = True
+        # self.ipmd.reward_target_polyak = 0.995
+        # self.ipmd.reward_target_update_interval = 1
 
         # Decouple and slow reward updates relative to PPO (combo G: B + F).
-        self.ipmd.reward_optimizer = "adamw"
-        self.ipmd.reward_lr = 1.0e-5
-        self.ipmd.reward_weight_decay = 0.0
-        self.ipmd.reward_max_grad_norm = 1.0
-        self.ipmd.reward_update_interval = 100
-        self.ipmd.reward_updates_per_policy_update = 2
-        self.ipmd.reward_update_warmup_updates = 500
+        # self.ipmd.reward_optimizer = "adamw"
+        # self.ipmd.reward_lr = 1.0e-5
+        # self.ipmd.reward_weight_decay = 0.0
+        # self.ipmd.reward_max_grad_norm = 1.0
+        # self.ipmd.reward_update_interval = 100
+        # self.ipmd.reward_updates_per_policy_update = 2
+        # self.ipmd.reward_update_warmup_updates = 500
         # Keep expert reward minibatch aligned with PPO minibatch by default.
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
-        self.ipmd.reward_balance_policy_and_expert = True
+        # self.ipmd.reward_balance_policy_and_expert = True
+        self.compile.compile = False
+        # self.trainer.progress_bar = True
+        self.ipmd.reward_output_scale = 0.25
+        self.ipmd.estimated_reward_clamp_min = 0.0
+        self.ipmd.estimated_reward_clamp_max = 0.25
+        self.ipmd.estimated_reward_mix_coeff = 0.3
+        self.collector.no_cuda_sync = True
 
+        # ------- unnecessary for ipmd simple --------- #
         # Trust-region / anti-collapse reward objective.
         # self.ipmd.reward_margin = 0.05
         # self.ipmd.reward_consistency_coeff = 0.2
@@ -115,7 +123,4 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # self.ipmd.bc_warmup_updates = 0
         # self.ipmd.bc_final_coeff = 0.0
 
-        self.compile.compile = False
 
-        self.trainer.progress_bar = False
-        self.ipmd.reward_output_scale = 0.25

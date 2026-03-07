@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Mapping
 
 import gymnasium as gym
 import torch
@@ -16,35 +17,14 @@ from rlopt.agent import (
     SACRLOptConfig,
 )  # noqa: F401
 from rlopt.config_base import RLOptConfig
-from torchrl.data.tensor_specs import Bounded, Composite, Unbounded
+from torchrl.data.tensor_specs import Composite, Unbounded
 from torchrl.envs.libs.gym import (
     GymWrapper,
     _gym_to_torchrl_spec_transform,
     terminal_obs_reader,
 )
-
-
-def _flatten_obs(obs: dict) -> dict:
-    """Flatten one level of nested observation dicts.
-
-    IsaacLab with ``concatenate_terms=False`` produces::
-
-        {"policy": {"joint_pos": tensor, "joint_vel": tensor, ...}}
-
-    This hoists the leaf tensors to top-level keys::
-
-        {"joint_pos": tensor, "joint_vel": tensor, ...}
-
-    Groups whose value is already a tensor (``concatenate_terms=True``)
-    are kept as-is.
-    """
-    flat: dict = {}
-    for k, v in obs.items():
-        if isinstance(v, dict):
-            flat.update(v)
-        else:
-            flat[k] = v
-    return flat
+from tensordict import TensorDict
+from tensordict.base import TensorDictBase
 
 
 class IsaacLabWrapper(GymWrapper):
@@ -105,7 +85,9 @@ class IsaacLabWrapper(GymWrapper):
             convert_actions_to_numpy=convert_actions_to_numpy,
             **kwargs,
         )
-        self.log_infos = deque()
+        # Keep only the latest log payload to avoid retaining large per-step
+        # info dicts (often CUDA tensors) across long rollouts.
+        self.log_infos = deque(maxlen=1)
 
     @property
     def _is_batched(self) -> bool:
@@ -113,6 +95,25 @@ class IsaacLabWrapper(GymWrapper):
 
     def seed(self, seed: int | None):
         self._set_seed(seed)
+
+    @staticmethod
+    def _extract_log_info(
+        info: dict[str, torch.Tensor | float | int | str | bool | None],
+    ) -> dict[str, object]:
+        """Extract a compact, logging-only info payload with CPU plain values.
+
+        IsaacLab info dicts can include large entries (e.g., final_obs). For
+        metrics logging we only need the ``log`` subtree, and we must ensure it
+        does not retain CUDA tensors to avoid illegal memory access once the
+        underlying device buffers are freed.
+        """
+
+        for key, value in info.items():
+            if isinstance(value, torch.Tensor):
+                info[key] = value.detach().cpu().item()
+            elif isinstance(value, Mapping):
+                info[key] = IsaacLabWrapper._extract_log_info(value)
+        return info
 
     def _build_env(
         self,
@@ -178,21 +179,6 @@ class IsaacLabWrapper(GymWrapper):
         if reward_space is not None:
             reward_spec = reward_spec.expand(*batch_size, *reward_spec.shape)  # type: ignore
 
-        # Flatten nested Composite specs produced by concatenate_terms=False
-        # groups so that individual term keys are top-level TensorDict keys.
-        flat_entries: dict = {}
-        needs_flatten = False
-        for key in list(observation_spec.keys()):
-            child = observation_spec[key]
-            if isinstance(child, Composite):
-                needs_flatten = True
-                for subkey in child.keys():
-                    flat_entries[subkey] = child[subkey]
-            else:
-                flat_entries[key] = child
-        if needs_flatten:
-            observation_spec = Composite(flat_entries, shape=observation_spec.shape)
-
         self.done_spec = self._make_done_spec()  # type: ignore
         self.action_spec = action_spec  # type: ignore
         self.reward_spec = reward_spec  # type: ignore
@@ -203,66 +189,78 @@ class IsaacLabWrapper(GymWrapper):
         #  in-place. We clone them here to make sure data doesn't inadvertently get modified.
         # The variable naming follows torchrl's convention here.
         observations, reward, terminated, truncated, info = step_outputs_tuple
-        self.log_infos.append(info)
+        self.log_infos.append(self._extract_log_info(info["log"]))
 
         done = terminated | truncated
 
         # IsaacLab emits Gymnasium-style keys: final_obs / final_info.
         # Keep only terminal entries to avoid introducing scalar log info into
         # the tensordict info path.
-        obs = _flatten_obs(observations)
-
         if isinstance(info, dict) and "final_obs" in info:
             info = {"final_obs": info["final_obs"]}
             return (
-                CloneObsBuf(obs),
-                reward.clone().unsqueeze(-1),
-                terminated.clone().to(dtype=torch.bool),
-                truncated.clone().to(dtype=torch.bool),
-                done.clone().to(dtype=torch.bool),
+                observations,
+                reward.unsqueeze(-1),
+                terminated.to(dtype=torch.bool),
+                truncated.to(dtype=torch.bool),
+                done.to(dtype=torch.bool),
                 info,
             )
         else:
             return (
-                CloneObsBuf(obs),
-                reward.clone().unsqueeze(-1),
-                terminated.clone().to(dtype=torch.bool),
-                truncated.clone().to(dtype=torch.bool),
-                done.clone().to(dtype=torch.bool),
+                observations,
+                reward.unsqueeze(-1),
+                terminated.to(dtype=torch.bool),
+                truncated.to(dtype=torch.bool),
+                done.to(dtype=torch.bool),
                 {},
             )
 
     def _reset_output_transform(self, reset_data):
         """Transform the output of the reset method."""
         observations, info = reset_data
-        self.log_infos.append(info)
-        return (CloneObsBuf(_flatten_obs(observations)), {})
+        self.log_infos.append(self._extract_log_info(info["log"]))
+        return (observations, {})
+
+    @staticmethod
+    def _normalize_nested_batch_sizes(td: TensorDictBase) -> None:
+        """Recursively align nested TensorDict batch sizes with their parent."""
+        parent_batch = td.batch_size
+        for key in td.keys():
+            value = td.get(key)
+            if not isinstance(value, TensorDictBase):
+                continue
+            current = value
+            if current.batch_size != parent_batch:
+                current = current.clone()
+                current.batch_size = parent_batch
+                td.set(key, current)
+            IsaacLabWrapper._normalize_nested_batch_sizes(current)
+
+    def _step(self, tensordict: TensorDictBase) -> TensorDictBase:
+        td_out = super()._step(tensordict)
+        self._normalize_nested_batch_sizes(td_out)
+        return td_out
+
+    def _reset(self, tensordict: TensorDictBase | None = None, **kwargs) -> TensorDict:
+        td_out = super()._reset(tensordict, **kwargs)
+        self._normalize_nested_batch_sizes(td_out)
+        return td_out
 
 
 def CloneObsBuf(
-    obs_buf: dict[str, torch.Tensor | dict],
-) -> dict[str, torch.Tensor | dict]:
-    """Clone the observation buffer.
-
-    Args:
-        obs_buf: Dictionary that can contain tensors or nested dictionaries of tensors.
-
-    Returns:
-        Cloned dictionary with the same structure as obs_buf.
-    """
-    cloned = {}
-    for k, v in obs_buf.items():
-        if isinstance(v, dict):
-            # Recursively clone nested dictionaries
-            cloned[k] = CloneObsBuf(v)
-        elif isinstance(v, torch.Tensor):
-            # Clone tensors
-            cloned[k] = v.clone()
-            assert v.dtype == torch.float32
-        else:
-            # For other types, just copy the reference
-            cloned[k] = v
-    return cloned
+    obs_buf: torch.Tensor | Mapping[str, object] | TensorDictBase,
+) -> torch.Tensor | dict[str, object]:
+    """Clone nested observation structures while normalizing TensorDict groups to dicts."""
+    if isinstance(obs_buf, torch.Tensor):
+        return obs_buf.clone()
+    if isinstance(obs_buf, TensorDictBase):
+        # Convert TensorDict groups to plain dicts so GymWrapper read_obs() can
+        # re-encode them with Composite spec batch semantics.
+        return {k: CloneObsBuf(obs_buf.get(k)) for k in obs_buf.keys()}
+    if isinstance(obs_buf, Mapping):
+        return {k: CloneObsBuf(v) for k, v in obs_buf.items()}
+    return obs_buf
 
 
 def CheckObsBufForNaN(
@@ -292,45 +290,81 @@ class IsaacLabTerminalObsReader(terminal_obs_reader):
 
     def __init__(self, observation_spec: Composite, backend, name: str = "final"):
         super().__init__(observation_spec=observation_spec, backend=backend, name=name)
+        # Avoid recursive final/final specs when the wrapped observation spec
+        # already exposes a terminal group.
+        if name in self._obs_spec.keys():
+            self._obs_spec.pop(name)
         # Provide info specs upfront to avoid dummy rollouts in set_info_dict_reader.
-        self._info_spec = Composite({self.name: observation_spec.clone()}, shape=[])
+        self._info_spec = Composite({self.name: self._obs_spec.clone()}, shape=[])
+
+    @staticmethod
+    def _extract_nested_value(obs: object, key_path: tuple[str, ...]) -> object | None:
+        cur = obs
+        for key in key_path:
+            if isinstance(cur, dict):
+                if key not in cur:
+                    return None
+                cur = cur[key]
+            else:
+                # Scalar/tensor observation: only valid for single-key paths.
+                return cur if len(key_path) == 1 else None
+        return cur
+
+    def _build_spec_buffer(
+        self,
+        spec: object,
+        per_env_obs: list[object | None],
+        key_path: tuple[str, ...],
+    ) -> object:
+        if isinstance(spec, Composite):
+            td = spec.zero()
+            for subkey in spec.keys():
+                child = self._build_spec_buffer(
+                    spec[subkey], per_env_obs, (*key_path, subkey)
+                )
+                td.set(subkey, child)
+            return td
+
+        buf = spec.zero()
+        device = buf.device
+        num_envs = len(per_env_obs)
+        for i in range(num_envs):
+            obs = per_env_obs[i]
+            if obs is None:
+                continue
+            val = self._extract_nested_value(obs, key_path)
+            if val is None:
+                continue
+            if isinstance(val, torch.Tensor):
+                buf[i] = val.to(device=device)
+            else:
+                buf[i] = torch.as_tensor(val, device=device)
+        return buf
 
     def __call__(self, info_dict, tensordict):
         # IsaacLab: info_dict["final_obs"] is np.ndarray(num_envs, dtype=object);
         # each entry is None or a nested dict produced by _slice_obs.
-        # We flatten exactly like _flatten_obs so keys match the flattened spec.
         backend_key = self.backend_key[self.backend]
         final_obs_arr = info_dict.pop(backend_key, None)
         info_dict.pop(self.backend_info_key[self.backend], None)
 
-        # Let the parent handle any remaining info entries and run spec
-        # validation, but skip its terminal-obs loop (we already popped the
-        # keys so the parent finds nothing and only writes zeros).
-        super().__call__(info_dict, tensordict)
-        if not self._final_validated:
-            self.info_spec[self.name] = self._obs_spec.update(self.info_spec)
-            self._final_validated = True
+        # We intentionally skip parent terminal_obs_reader.__call__ here to
+        # avoid recursive `final` spec self-merging. The IsaacLab wrapper
+        # passes through only terminal observation info for this reader.
 
-        # Flatten per-env dicts once, then scatter into batched zero buffers.
-        num_envs = len(final_obs_arr) if final_obs_arr is not None else 0
-        flat_per_env: list[dict | None] = [None] * num_envs
-        for i in range(num_envs):
-            if final_obs_arr[i] is not None:
-                flat_per_env[i] = _flatten_obs(final_obs_arr[i])
+        num_envs = (
+            len(final_obs_arr)
+            if final_obs_arr is not None
+            else int(tensordict.batch_size[0] if len(tensordict.batch_size) > 0 else 0)
+        )
+        per_env_obs: list[object | None] = [None] * num_envs
+        if final_obs_arr is not None:
+            for i in range(num_envs):
+                per_env_obs[i] = final_obs_arr[i]
 
         for key in self.info_spec[self.name].keys():
             spec = self.info_spec[self.name, key]
-            buf = spec.zero()
-            device = buf.device
-            for i in range(num_envs):
-                flat = flat_per_env[i]
-                if flat is None or key not in flat:
-                    continue
-                val = flat[key]
-                if isinstance(val, torch.Tensor):
-                    buf[i] = val.to(device=device)
-                else:
-                    buf[i] = torch.as_tensor(val, device=device)
+            buf = self._build_spec_buffer(spec, per_env_obs, (key,))
             tensordict.set((self.name, key), buf)
 
         return tensordict
