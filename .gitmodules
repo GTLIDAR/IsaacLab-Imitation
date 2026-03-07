@@ -1,9 +1,9 @@
 [submodule "IsaacLab"]
 	path = IsaacLab
-	url = git@github.com:GTLIDAR/IsaacLab.git
+	url = https://github.com/isaac-sim/IsaacLab.git
 [submodule "RLOpt"]
 	path = RLOpt
-	url = git@github.com:fei-yang-wu/RLOpt.git
+	url = https://github.com/fei-yang-wu/RLOpt.git
 [submodule "ImitationLearningTools"]
 	path = ImitationLearningTools
-	url = git@github.com:GTLIDAR/ImitationLearningTools.git
+	url = https://github.com/GTLIDAR/ImitationLearningTools.git
