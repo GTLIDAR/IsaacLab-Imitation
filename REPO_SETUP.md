@@ -107,6 +107,6 @@ CLUSTER_RLOPT_LOCAL_PATH=/absolute/path/to/RLOpt
 # CLUSTER_IMITATION_TOOLS_LOCAL_PATH=/absolute/path/to/ImitationLearningTools
 ```
 
-These overrides are used when `CLUSTER_EXTRA_SYNC_SPECS` is not set. The paths are local paths on the submission machine.
+These overrides are used when `CLUSTER_EXTRA_SYNC_SPECS` is not set. Only the uncommented overrides are synced as overlays. If none are set, the cluster job uses the submodule state from the main `IsaacLabImitation` checkout without extra repo sync. The paths are local paths on the submission machine.
 
 Each `job` submission also writes a repo manifest to `<CLUSTER_ISAACLAB_DIR>/repo_sync_manifest.tsv` containing SHA/branch/dirty-state for all synced repos.

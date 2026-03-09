@@ -407,7 +407,17 @@ def main(
         raise NotImplementedError(
             "DirectMARLEnv is not supported for RLOpt training yet."
         )
-
+    # wrap for video recording
+    if args_cli.video:
+        video_kwargs = {
+            "video_folder": os.path.join(log_dir, "videos", "train"),
+            "step_trigger": lambda step: step % args_cli.video_interval == 0,
+            "video_length": args_cli.video_length,
+            "disable_logger": True,
+        }
+        print("[INFO] Recording videos during training.")
+        print_dict(video_kwargs, nesting=4)
+        env = gym.wrappers.RecordVideo(env, **video_kwargs)  # type: ignore
     start_time = time.time()
 
     env = IsaacLabWrapper(env)  # type: ignore
@@ -423,64 +433,64 @@ def main(
             StepCounter(1000),  # type: ignore
         ),
     )
-    if args_cli.video:
-        # Follow TorchRL recorder docs:
-        # PixelRenderTransform + VideoRecorder, and periodic dump during training.
-        video_fps = _infer_render_fps(env, default_fps=30)
-        video_kwargs = {
-            "video_log_dir": os.path.join(log_dir, "videos"),
-            "video_exp_name": "train",
-            "video_interval": int(args_cli.video_interval),
-            "video_length": int(args_cli.video_length),
-            "video_sampling_stride": 1,
-            "video_fps": video_fps,
-            "viewer_resolution": (
-                tuple(env_cfg.viewer.resolution)
-                if hasattr(env_cfg, "viewer") and hasattr(env_cfg.viewer, "resolution")
-                else None
-            ),
-        }
-        print("[INFO] Recording videos during training with TorchRL VideoRecorder.")
-        print_dict(video_kwargs, nesting=4)
-        video_logger = CSVLogger(
-            exp_name=video_kwargs["video_exp_name"],
-            log_dir=video_kwargs["video_log_dir"],
-            video_format="mp4",
-            video_fps=video_kwargs["video_fps"],
-        )
-        pixel_render = StepTriggeredPixelRenderTransform(
-            video_interval=video_kwargs["video_interval"],
-            video_length=video_kwargs["video_length"],
-            out_keys=["pixels"],
-            preproc=_render_frame_to_numpy,
-            as_non_tensor=True,
-        )
-        env.append_transform(pixel_render)
-        video_recorder = VideoRecorder(
-            logger=video_logger,
-            tag="train",
-            in_keys=["pixels"],
-            skip=video_kwargs["video_sampling_stride"],
-            make_grid=False,
-            fps=video_kwargs["video_fps"],
-        )
-        # Rendering is step-triggered; allow missing pixel keys outside active windows.
-        video_recorder.set_missing_tolerance(True)
+    # if args_cli.video:
+    #     # Follow TorchRL recorder docs:
+    #     # PixelRenderTransform + VideoRecorder, and periodic dump during training.
+    #     video_fps = _infer_render_fps(env, default_fps=30)
+    #     video_kwargs = {
+    #         "video_log_dir": os.path.join(log_dir, "videos"),
+    #         "video_exp_name": "train",
+    #         "video_interval": int(args_cli.video_interval),
+    #         "video_length": int(args_cli.video_length),
+    #         "video_sampling_stride": 1,
+    #         "video_fps": video_fps,
+    #         "viewer_resolution": (
+    #             tuple(env_cfg.viewer.resolution)
+    #             if hasattr(env_cfg, "viewer") and hasattr(env_cfg.viewer, "resolution")
+    #             else None
+    #         ),
+    #     }
+    #     print("[INFO] Recording videos during training with TorchRL VideoRecorder.")
+    #     print_dict(video_kwargs, nesting=4)
+    #     video_logger = CSVLogger(
+    #         exp_name=video_kwargs["video_exp_name"],
+    #         log_dir=video_kwargs["video_log_dir"],
+    #         video_format="mp4",
+    #         video_fps=video_kwargs["video_fps"],
+    #     )
+    #     pixel_render = StepTriggeredPixelRenderTransform(
+    #         video_interval=video_kwargs["video_interval"],
+    #         video_length=video_kwargs["video_length"],
+    #         out_keys=["pixels"],
+    #         preproc=_render_frame_to_numpy,
+    #         as_non_tensor=True,
+    #     )
+    #     env.append_transform(pixel_render)
+    #     video_recorder = VideoRecorder(
+    #         logger=video_logger,
+    #         tag="train",
+    #         in_keys=["pixels"],
+    #         skip=video_kwargs["video_sampling_stride"],
+    #         make_grid=False,
+    #         fps=video_kwargs["video_fps"],
+    #     )
+    #     # Rendering is step-triggered; allow missing pixel keys outside active windows.
+    #     video_recorder.set_missing_tolerance(True)
 
-        def _dump_triggered_clip(window_start_step: int) -> None:
-            # Avoid empty dumps: CSV logger increments counters even on empty writes.
-            if len(getattr(video_recorder, "obs", [])) == 0:
-                return
-            video_recorder.dump(suffix=f"step_{window_start_step}")
+    #     def _dump_triggered_clip(window_start_step: int) -> None:
+    #         # Avoid empty dumps: CSV logger increments counters even on empty writes.
+    #         if len(getattr(video_recorder, "obs", [])) == 0:
+    #             return
+    #         video_recorder.dump(suffix=f"step_{window_start_step}")
 
-        pixel_render.set_dump_callback(_dump_triggered_clip)
-        env.append_transform(video_recorder)
-        # Keep recorder-only keys out of collector/replay-buffer payloads.
-        env.append_transform(ExcludeTransform("pixels"))
-        env._video_recording_cfg = {  # type: ignore[attr-defined]
-            "video_interval": video_kwargs["video_interval"],
-            "step_managed": True,
-        }
+    #     pixel_render.set_dump_callback(_dump_triggered_clip)
+    #     env.append_transform(video_recorder)
+    #     # Keep recorder-only keys out of collector/replay-buffer payloads.
+    #     env.append_transform(ExcludeTransform("pixels"))
+    #     env._video_recording_cfg = {  # type: ignore[attr-defined]
+    #         "video_interval": video_kwargs["video_interval"],
+    #         "step_managed": True,
+    #     }
 
     agent_class = ALGORITHM_CLASS_MAP[args_cli.algorithm]
     agent = agent_class(

@@ -26,6 +26,33 @@ display_warning() {
     echo -e "\033[31mWARNING: $1\033[0m"
 }
 
+normalize_git_remote_to_https() {
+    local remote_url="$1"
+
+    if [ -z "$remote_url" ]; then
+        echo "$remote_url"
+        return
+    fi
+
+    case "$remote_url" in
+        git@*:* )
+            local host_part="${remote_url#git@}"
+            local host="${host_part%%:*}"
+            local repo_path="${host_part#*:}"
+            echo "https://$host/$repo_path"
+            ;;
+        ssh://git@*/* )
+            local without_prefix="${remote_url#ssh://git@}"
+            local host="${without_prefix%%/*}"
+            local repo_path="${without_prefix#*/}"
+            echo "https://$host/$repo_path"
+            ;;
+        * )
+            echo "$remote_url"
+            ;;
+    esac
+}
+
 # Helper function to compare version numbers
 version_gte() {
     # Returns 0 if the first version is greater than or equal to the second, otherwise 1
@@ -140,6 +167,7 @@ prepare_repo_git_sync_metadata() {
         REPO_SYNC_REASON="missing_origin_remote"
         return 1
     fi
+    REPO_SYNC_ORIGIN_URL="$(normalize_git_remote_to_https "$REPO_SYNC_ORIGIN_URL")"
 
     REPO_SYNC_REASON="dirty_worktree"
     if [ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]; then
@@ -364,14 +392,25 @@ resolve_repo_sync_path() {
 build_default_sync_specs() {
     local local_workspace_root="$1"
     local sibling_workspace_root="$2"
-    local isaaclab_local_path
-    local rlopt_local_path
-    local ilt_local_path
+    local local_specs=""
+    local resolved_path=""
 
-    isaaclab_local_path="$(resolve_repo_sync_path "IsaacLab" "$local_workspace_root/IsaacLab" "$sibling_workspace_root/IsaacLab" "CLUSTER_ISAACLAB_LOCAL_PATH")"
-    rlopt_local_path="$(resolve_repo_sync_path "RLOpt" "$local_workspace_root/RLOpt" "$sibling_workspace_root/RLOpt" "CLUSTER_RLOPT_LOCAL_PATH")"
-    ilt_local_path="$(resolve_repo_sync_path "ImitationLearningTools" "$local_workspace_root/ImitationLearningTools" "$sibling_workspace_root/ImitationLearningTools" "CLUSTER_IMITATION_TOOLS_LOCAL_PATH")"
-    echo "$isaaclab_local_path:IsaacLab $rlopt_local_path:RLOpt $ilt_local_path:ImitationLearningTools"
+    if [ -n "${CLUSTER_ISAACLAB_LOCAL_PATH:-}" ]; then
+        resolved_path="$(resolve_repo_sync_path "IsaacLab" "$local_workspace_root/IsaacLab" "$sibling_workspace_root/IsaacLab" "CLUSTER_ISAACLAB_LOCAL_PATH")"
+        local_specs="$local_specs $resolved_path:IsaacLab"
+    fi
+
+    if [ -n "${CLUSTER_RLOPT_LOCAL_PATH:-}" ]; then
+        resolved_path="$(resolve_repo_sync_path "RLOpt" "$local_workspace_root/RLOpt" "$sibling_workspace_root/RLOpt" "CLUSTER_RLOPT_LOCAL_PATH")"
+        local_specs="$local_specs $resolved_path:RLOpt"
+    fi
+
+    if [ -n "${CLUSTER_IMITATION_TOOLS_LOCAL_PATH:-}" ]; then
+        resolved_path="$(resolve_repo_sync_path "ImitationLearningTools" "$local_workspace_root/ImitationLearningTools" "$sibling_workspace_root/ImitationLearningTools" "CLUSTER_IMITATION_TOOLS_LOCAL_PATH")"
+        local_specs="$local_specs $resolved_path:ImitationLearningTools"
+    fi
+
+    echo "${local_specs# }"
 }
 
 append_repo_manifest_entry() {
@@ -489,6 +528,11 @@ sync_extra_repos() {
         local_specs="$(build_default_sync_specs "$local_workspace_root" "$sibling_workspace_root")"
     fi
     SYNC_EXTRA_REPO_SPECS="$local_specs"
+
+    if [ -z "$local_specs" ]; then
+        echo "[INFO] No extra repo overlays requested; using submodule state from IsaacLabImitation."
+        return
+    fi
 
     for spec in $local_specs; do
         local_path="${spec%%:*}"
@@ -612,7 +656,7 @@ case $command in
         # Sync Isaac Lab imitation code
         echo "[INFO] Syncing IsaacLab-Imitation code..."
         sync_repo_prefer_git_then_rsync "$local_workspace_root" "$CLUSTER_ISAACLAB_DIR" "IsaacLabImitation" "."
-        # Sync optional extra repos (default: IsaacLab + RLOpt + ImitationLearningTools)
+        # Sync optional extra repos only when explicitly requested via overrides/specs.
         sync_extra_repos
         # Record exact repo SHAs and dirty state used in this submission.
         record_repo_sync_manifest
