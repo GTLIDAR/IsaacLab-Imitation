@@ -14,8 +14,6 @@ from pathlib import Path
 import torch
 from isaaclab.app import AppLauncher
 
-torch._logging.set_logs(all=logging.CRITICAL)
-
 # add argparse arguments
 parser = argparse.ArgumentParser(
     description="Train an RL agent with Stable-Baselines3."
@@ -163,7 +161,6 @@ torch.set_float32_matmul_precision("high")
 
 # import logger
 logger = logging.getLogger(__name__)
-# PLACEHOLDER: Extension template (do not remove this comment)
 
 ALGORITHM_CLASS_MAP = {
     "PPO": PPO,

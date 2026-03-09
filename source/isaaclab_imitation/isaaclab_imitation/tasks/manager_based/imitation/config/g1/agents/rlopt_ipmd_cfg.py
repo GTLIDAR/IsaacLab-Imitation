@@ -74,12 +74,13 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
         # self.ipmd.reward_balance_policy_and_expert = True
         self.compile.compile = False
-        # self.trainer.progress_bar = True
+        self.trainer.progress_bar = True
         self.ipmd.reward_output_scale = 0.25
         self.ipmd.estimated_reward_clamp_min = 0.0
         self.ipmd.estimated_reward_clamp_max = 0.25
         self.ipmd.estimated_reward_mix_coeff = 0.3
         self.collector.no_cuda_sync = True
+        self.log_level = "critical"
 
         # ------- unnecessary for ipmd simple --------- #
         # Trust-region / anti-collapse reward objective.
@@ -122,5 +123,3 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # self.ipmd.bc_loss_coeff = 0.00
         # self.ipmd.bc_warmup_updates = 0
         # self.ipmd.bc_final_coeff = 0.0
-
-

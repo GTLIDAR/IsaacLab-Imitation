@@ -201,18 +201,18 @@ class IsaacLabWrapper(GymWrapper):
             return (
                 observations,
                 reward.unsqueeze(-1),
-                terminated.to(dtype=torch.bool),
-                truncated.to(dtype=torch.bool),
-                done.to(dtype=torch.bool),
+                terminated.clone().to(dtype=torch.bool),
+                truncated.clone().to(dtype=torch.bool),
+                done.clone().to(dtype=torch.bool),
                 info,
             )
         else:
             return (
                 observations,
                 reward.unsqueeze(-1),
-                terminated.to(dtype=torch.bool),
-                truncated.to(dtype=torch.bool),
-                done.to(dtype=torch.bool),
+                terminated.clone().to(dtype=torch.bool),
+                truncated.clone().to(dtype=torch.bool),
+                done.clone().to(dtype=torch.bool),
                 {},
             )
 
