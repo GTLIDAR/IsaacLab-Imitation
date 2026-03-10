@@ -1,6 +1,6 @@
+import logging
 import shutil
 from collections.abc import Sequence
-import logging
 from pathlib import Path
 from typing import Any, TypeAlias
 
@@ -17,9 +17,19 @@ from isaaclab.markers.config import (
 )
 from tensordict import TensorDict
 
-
 logger = logging.getLogger(__name__)
 NestedKey: TypeAlias = str | tuple[str, ...]
+_MDP_COMPILED: Any | None = None
+
+
+def _get_mdp_compiled_module() -> Any:
+    global _MDP_COMPILED
+    if _MDP_COMPILED is None:
+        from isaaclab_imitation.tasks.manager_based.imitation.mdp import _compiled
+
+        _MDP_COMPILED = _compiled
+    return _MDP_COMPILED
+
 
 # Import the new manager and utilities
 try:
@@ -140,8 +150,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 motions=motions,
                 trajectories=traj_names,
                 keys=keys,
-                device="cpu",
+                device=torch.device("cuda:0"),
                 verbose_tree=False,
+                prefetch=3,
             )
         else:
             raise ValueError(
@@ -263,6 +274,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         self.robot: Articulation = self.scene["robot"]
         self._finalize_reference_body_names()
+        self._initialize_mdp_fast_paths()
         self._setup_reference_velocity_visualizer()
         self._update_reference_velocity_visualizer()
 
@@ -337,6 +349,400 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             lowered = lowered[:-5]
         return lowered
 
+    def _initialize_mdp_fast_paths(self) -> None:
+        if not hasattr(self, "robot"):
+            self.robot = self.scene["robot"]
+        self._finalize_reference_body_names()
+        self._mdp_cache_step = -1
+        self._mdp_align_quat: torch.Tensor | None = None
+        self._mdp_align_pos: torch.Tensor | None = None
+        self._mdp_reference_root_cache: (
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None
+        ) = None
+        self._mdp_reference_cvel_cache: torch.Tensor | None = None
+        self._mdp_reference_motion_cache: dict[tuple[int, ...], torch.Tensor] = {}
+        self._mdp_reference_body_id_cache: dict[tuple[str, ...], torch.Tensor] = {}
+        self._mdp_reference_body_pose_cache: dict[
+            tuple[str, ...], tuple[torch.Tensor, torch.Tensor]
+        ] = {}
+        self._mdp_reference_body_velocity_cache: dict[
+            tuple[str, ...], tuple[torch.Tensor, torch.Tensor]
+        ] = {}
+        self._mdp_robot_anchor_id_cache: dict[str, int] = {}
+        self._mdp_robot_anchor_state_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._mdp_robot_body_pose_w_cache: dict[
+            object, tuple[torch.Tensor, torch.Tensor]
+        ] = {}
+        self._mdp_robot_body_velocity_w_cache: dict[
+            object, tuple[torch.Tensor, torch.Tensor]
+        ] = {}
+        self._mdp_robot_body_anchor_frame_cache: dict[
+            tuple[int, object], tuple[torch.Tensor, torch.Tensor]
+        ] = {}
+        self._mdp_body_name_to_id = {
+            name: idx for idx, name in enumerate(self.robot.body_names)
+        }
+        self._mdp_body_name_to_id_lower = {
+            name.lower(): idx for idx, name in enumerate(self.robot.body_names)
+        }
+        self._mdp_body_name_to_id_normalized = {
+            self._normalize_body_name_for_matching(name): idx
+            for idx, name in enumerate(self.robot.body_names)
+        }
+        self._mdp_reference_body_name_to_id = {
+            name: idx for idx, name in enumerate(self.reference_body_names)
+        }
+        self._mdp_reference_body_name_to_id_lower = {
+            name.lower(): idx for idx, name in enumerate(self.reference_body_names)
+        }
+        self._mdp_reference_body_name_to_id_normalized = {
+            self._normalize_body_name_for_matching(name): idx
+            for idx, name in enumerate(self.reference_body_names)
+        }
+        self._mdp_body_id_tensor_cache: dict[tuple[int, ...], torch.Tensor] = {}
+        self._mdp_joint_id_tensor_cache: dict[tuple[int, ...], torch.Tensor] = {}
+        self._mdp_all_body_ids_key = tuple(range(len(self.robot.body_names)))
+        self._mdp_reset_pose_bounds: torch.Tensor | None = None
+        self._mdp_reset_velocity_bounds: torch.Tensor | None = None
+
+        reference = self.current_reference
+        self._mdp_reference_body_pos_key = (
+            "xpos" if "xpos" in reference else "body_pos_w"
+        )
+        self._mdp_reference_body_quat_key = (
+            "xquat" if "xquat" in reference else "body_quat_w"
+        )
+        self._mdp_reference_body_count = int(
+            reference[self._mdp_reference_body_pos_key].shape[1]
+        )
+        self._mdp_reset_root_pose_source = (
+            "root" if "root_pos" in reference and "root_quat" in reference else "body"
+        )
+        if "root_lin_vel" in reference and "root_ang_vel" in reference:
+            self._mdp_reset_root_velocity_source = "root"
+        elif "body_lin_vel_w" in reference and "body_ang_vel_w" in reference:
+            self._mdp_reset_root_velocity_source = "body"
+        else:
+            self._mdp_reset_root_velocity_source = "zeros"
+
+    def _ensure_mdp_fast_paths(self) -> None:
+        if hasattr(self, "_mdp_cache_step"):
+            return
+        self._initialize_mdp_fast_paths()
+
+    def _invalidate_mdp_cache(self) -> None:
+        self._ensure_mdp_fast_paths()
+        self._mdp_cache_step = -1
+        self._mdp_align_quat = None
+        self._mdp_align_pos = None
+        self._mdp_reference_root_cache = None
+        self._mdp_reference_cvel_cache = None
+        self._mdp_reference_motion_cache.clear()
+        self._mdp_reference_body_pose_cache.clear()
+        self._mdp_reference_body_velocity_cache.clear()
+        self._mdp_robot_anchor_state_cache.clear()
+        self._mdp_robot_body_pose_w_cache.clear()
+        self._mdp_robot_body_velocity_w_cache.clear()
+        self._mdp_robot_body_anchor_frame_cache.clear()
+
+    def _ensure_mdp_step_cache(self) -> None:
+        self._ensure_mdp_fast_paths()
+        if (
+            self._mdp_cache_step == self.common_step_counter
+            and self._mdp_align_quat is not None
+        ):
+            return
+        align_quat, align_pos = self._get_reference_alignment_transform()
+        self._mdp_align_quat = align_quat
+        self._mdp_align_pos = align_pos
+        self._mdp_reference_root_cache = None
+        self._mdp_reference_cvel_cache = None
+        self._mdp_reference_motion_cache.clear()
+        self._mdp_reference_body_pose_cache.clear()
+        self._mdp_reference_body_velocity_cache.clear()
+        self._mdp_robot_anchor_state_cache.clear()
+        self._mdp_robot_body_pose_w_cache.clear()
+        self._mdp_robot_body_velocity_w_cache.clear()
+        self._mdp_robot_body_anchor_frame_cache.clear()
+        self._mdp_cache_step = self.common_step_counter
+
+    def _get_reference_alignment_fast(self) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        return self._mdp_align_quat, self._mdp_align_pos  # type: ignore[return-value]
+
+    def _get_body_ids_tensor_fast(
+        self, body_ids: Sequence[int] | slice
+    ) -> torch.Tensor | slice:
+        self._ensure_mdp_fast_paths()
+        if isinstance(body_ids, slice):
+            return body_ids
+        key = tuple(int(body_id) for body_id in body_ids)
+        body_ids_t = self._mdp_body_id_tensor_cache.get(key)
+        if body_ids_t is None:
+            body_ids_t = torch.tensor(key, dtype=torch.long, device=self.device)
+            self._mdp_body_id_tensor_cache[key] = body_ids_t
+        return body_ids_t
+
+    def _get_joint_ids_tensor_fast(
+        self, joint_ids: Sequence[int] | slice
+    ) -> torch.Tensor | slice:
+        self._ensure_mdp_fast_paths()
+        if isinstance(joint_ids, slice):
+            return joint_ids
+        key = tuple(int(joint_id) for joint_id in joint_ids)
+        joint_ids_t = self._mdp_joint_id_tensor_cache.get(key)
+        if joint_ids_t is None:
+            joint_ids_t = torch.tensor(key, dtype=torch.long, device=self.device)
+            self._mdp_joint_id_tensor_cache[key] = joint_ids_t
+        return joint_ids_t
+
+    def _get_reference_root_state_w_fast(
+        self,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        if self._mdp_reference_root_cache is None:
+            compiled = _get_mdp_compiled_module()
+            reference = self.current_reference
+            root_pos_w, root_quat_w = compiled.transform_root_pose_to_world(
+                self._mdp_align_quat,
+                self._mdp_align_pos,
+                reference["root_pos"],
+                reference["root_quat"],
+            )
+            root_lin_vel_w, root_ang_vel_w = compiled.transform_root_velocity_to_world(
+                self._mdp_align_quat,
+                reference["root_lin_vel"],
+                reference["root_ang_vel"],
+            )
+            self._mdp_reference_root_cache = (
+                root_pos_w,
+                root_quat_w,
+                root_lin_vel_w,
+                root_ang_vel_w,
+            )
+        return self._mdp_reference_root_cache
+
+    def _get_reference_cvel_fast(self) -> torch.Tensor:
+        self._ensure_mdp_step_cache()
+        if self._mdp_reference_cvel_cache is None:
+            reference = self.current_reference
+            self._mdp_reference_cvel_cache = torch.cat(
+                [reference["body_ang_vel_w"], reference["body_lin_vel_w"]], dim=-1
+            )
+        return self._mdp_reference_cvel_cache
+
+    def _get_reference_body_ids_fast(
+        self, reference_body_names: Sequence[str]
+    ) -> torch.Tensor:
+        self._ensure_mdp_fast_paths()
+        cache_key = tuple(reference_body_names)
+        body_ids = self._mdp_reference_body_id_cache.get(cache_key)
+        if body_ids is not None:
+            return body_ids
+
+        ref_indices: list[int] = []
+        for name in cache_key:
+            body_id = self._mdp_reference_body_name_to_id.get(name)
+            if body_id is None:
+                body_id = self._mdp_reference_body_name_to_id_lower.get(name.lower())
+            if body_id is None:
+                body_id = self._mdp_reference_body_name_to_id_normalized.get(
+                    self._normalize_body_name_for_matching(name)
+                )
+            if body_id is None:
+                body_id = self._mdp_body_name_to_id.get(name)
+            if body_id is None:
+                body_id = self._mdp_body_name_to_id_lower.get(name.lower())
+            if body_id is None:
+                body_id = self._mdp_body_name_to_id_normalized.get(
+                    self._normalize_body_name_for_matching(name)
+                )
+            if body_id is not None and body_id >= self._mdp_reference_body_count:
+                body_id = None
+            if body_id is None:
+                raise KeyError(
+                    f"Reference body '{name}' not found in reference metadata."
+                )
+            ref_indices.append(body_id)
+
+        body_ids = torch.tensor(ref_indices, dtype=torch.long, device=self.device)
+        self._mdp_reference_body_id_cache[cache_key] = body_ids
+        return body_ids
+
+    def _get_reference_body_pose_w_fast(
+        self, reference_body_names: Sequence[str]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        cache_key = tuple(reference_body_names)
+        body_pose = self._mdp_reference_body_pose_cache.get(cache_key)
+        if body_pose is None:
+            compiled = _get_mdp_compiled_module()
+            ref_body_ids = self._get_reference_body_ids_fast(cache_key)
+            reference = self.current_reference
+            ref_pos = reference[self._mdp_reference_body_pos_key].index_select(
+                1, ref_body_ids
+            )
+            ref_quat = reference[self._mdp_reference_body_quat_key].index_select(
+                1, ref_body_ids
+            )
+            body_pose = compiled.transform_body_pose_to_world(
+                self._mdp_align_quat,
+                self._mdp_align_pos,
+                ref_pos,
+                ref_quat,
+            )
+            self._mdp_reference_body_pose_cache[cache_key] = body_pose
+        return body_pose
+
+    def _get_reference_body_velocity_w_fast(
+        self, reference_body_names: Sequence[str]
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        cache_key = tuple(reference_body_names)
+        body_velocity = self._mdp_reference_body_velocity_cache.get(cache_key)
+        if body_velocity is None:
+            compiled = _get_mdp_compiled_module()
+            ref_body_ids = self._get_reference_body_ids_fast(cache_key)
+            ref_cvel = self._get_reference_cvel_fast().index_select(1, ref_body_ids)
+            body_velocity = compiled.transform_body_velocity_to_world(
+                self._mdp_align_quat, ref_cvel
+            )
+            self._mdp_reference_body_velocity_cache[cache_key] = body_velocity
+        return body_velocity
+
+    def _get_robot_anchor_body_id_fast(self, anchor_body_name: str) -> int:
+        self._ensure_mdp_fast_paths()
+        anchor_body_id = self._mdp_robot_anchor_id_cache.get(anchor_body_name)
+        if anchor_body_id is None:
+            anchor_body_id = self._mdp_body_name_to_id.get(anchor_body_name)
+            if anchor_body_id is None:
+                anchor_body_id = self._mdp_body_name_to_id_lower.get(
+                    anchor_body_name.lower()
+                )
+            if anchor_body_id is None:
+                anchor_body_id = self._mdp_body_name_to_id_normalized[
+                    self._normalize_body_name_for_matching(anchor_body_name)
+                ]
+            self._mdp_robot_anchor_id_cache[anchor_body_name] = anchor_body_id
+        return anchor_body_id
+
+    def _body_ids_cache_key(
+        self, body_ids: Sequence[int] | torch.Tensor | slice
+    ) -> object:
+        if isinstance(body_ids, slice):
+            return self._mdp_all_body_ids_key
+        if isinstance(body_ids, torch.Tensor):
+            if body_ids.device.type == "cpu":
+                return tuple(int(body_id) for body_id in body_ids.tolist())
+            return ("tensor", int(body_ids.data_ptr()), int(body_ids.numel()))
+        return tuple(int(body_id) for body_id in body_ids)
+
+    def _get_robot_anchor_state_w_fast(
+        self, anchor_body_name: str
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        anchor_body_id = self._get_robot_anchor_body_id_fast(anchor_body_name)
+        anchor_state = self._mdp_robot_anchor_state_cache.get(anchor_body_id)
+        if anchor_state is None:
+            anchor_state = (
+                self.robot.data.body_pos_w[:, anchor_body_id],
+                self.robot.data.body_quat_w[:, anchor_body_id],
+            )
+            self._mdp_robot_anchor_state_cache[anchor_body_id] = anchor_state
+        return anchor_state
+
+    def _get_robot_body_pose_w_fast(
+        self, body_ids: Sequence[int] | torch.Tensor | slice
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        body_ids_key = self._body_ids_cache_key(body_ids)
+        body_pose = self._mdp_robot_body_pose_w_cache.get(body_ids_key)
+        if body_pose is not None:
+            return body_pose
+        body_ids_t = self._get_body_ids_tensor_fast(body_ids)
+        if isinstance(body_ids_t, slice):
+            body_pose = (self.robot.data.body_pos_w, self.robot.data.body_quat_w)
+        else:
+            body_pose = (
+                self.robot.data.body_pos_w.index_select(1, body_ids_t),
+                self.robot.data.body_quat_w.index_select(1, body_ids_t),
+            )
+        self._mdp_robot_body_pose_w_cache[body_ids_key] = body_pose
+        return body_pose
+
+    def _get_robot_body_velocity_w_fast(
+        self, body_ids: Sequence[int] | torch.Tensor | slice
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        body_ids_key = self._body_ids_cache_key(body_ids)
+        body_velocity = self._mdp_robot_body_velocity_w_cache.get(body_ids_key)
+        if body_velocity is not None:
+            return body_velocity
+        body_ids_t = self._get_body_ids_tensor_fast(body_ids)
+        if isinstance(body_ids_t, slice):
+            body_velocity = (self.robot.data.body_ang_vel_w, self.robot.data.body_lin_vel_w)
+        else:
+            body_velocity = (
+                self.robot.data.body_ang_vel_w.index_select(1, body_ids_t),
+                self.robot.data.body_lin_vel_w.index_select(1, body_ids_t),
+            )
+        self._mdp_robot_body_velocity_w_cache[body_ids_key] = body_velocity
+        return body_velocity
+
+    def _get_robot_body_state_in_anchor_frame_fast(
+        self,
+        body_ids: Sequence[int] | torch.Tensor | slice,
+        anchor_body_name: str,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self._ensure_mdp_step_cache()
+        anchor_body_id = self._get_robot_anchor_body_id_fast(anchor_body_name)
+        body_ids_key = self._body_ids_cache_key(body_ids)
+        cache_key = (anchor_body_id, body_ids_key)
+        body_state = self._mdp_robot_body_anchor_frame_cache.get(cache_key)
+        if body_state is not None:
+            return body_state
+
+        compiled = _get_mdp_compiled_module()
+        robot_anchor_pos_w, robot_anchor_quat_w = self._get_robot_anchor_state_w_fast(
+            anchor_body_name
+        )
+        body_pos_w, body_quat_w = self._get_robot_body_pose_w_fast(body_ids)
+        body_state = compiled.body_pose_in_anchor_frame(
+            robot_anchor_pos_w,
+            robot_anchor_quat_w,
+            body_pos_w,
+            body_quat_w,
+        )
+        self._mdp_robot_body_anchor_frame_cache[cache_key] = body_state
+        return body_state
+
+    def _get_reference_motion_command_fast(
+        self, joint_ids: Sequence[int] | slice
+    ) -> torch.Tensor:
+        self._ensure_mdp_step_cache()
+        if isinstance(joint_ids, slice):
+            return torch.cat(
+                [
+                    self.current_reference["joint_pos"],
+                    self.current_reference["joint_vel"],
+                ],
+                dim=-1,
+            )
+
+        joint_ids_t = self._get_joint_ids_tensor_fast(joint_ids)
+        cache_key = tuple(int(joint_id) for joint_id in joint_ids)
+        motion_command = self._mdp_reference_motion_cache.get(cache_key)
+        if motion_command is None:
+            motion_command = torch.cat(
+                [
+                    self.current_reference["joint_pos"].index_select(-1, joint_ids_t),
+                    self.current_reference["joint_vel"].index_select(-1, joint_ids_t),
+                ],
+                dim=-1,
+            )
+            self._mdp_reference_motion_cache[cache_key] = motion_command
+        return motion_command
+
     def _resolve_reference_body_visualization_pairs(
         self,
     ) -> tuple[torch.Tensor, torch.Tensor, list[str]] | None:
@@ -353,6 +759,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             pass
         if reference_body_pos is None or reference_body_quat is None:
             return None
+        num_reference_bodies = int(reference_body_pos.shape[1])
 
         robot_body_names = list(self.robot.body_names)
         robot_name_lookup = {name: idx for idx, name in enumerate(robot_body_names)}
@@ -497,6 +904,30 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             ref_pos, ref_quat, env_ids=env_ids
         )
 
+    def _index_copy_reference_rows_(
+        self, dst: TensorDict, src: TensorDict, env_ids: torch.Tensor
+    ) -> None:
+        for key in src.keys():
+            src_value = src.get(key)
+            dst_value = dst.get(key)
+            if isinstance(src_value, TensorDict) and isinstance(dst_value, TensorDict):
+                self._index_copy_reference_rows_(dst_value, src_value, env_ids)
+                continue
+            if isinstance(src_value, torch.Tensor) and isinstance(dst_value, torch.Tensor):
+                dst_value.index_copy_(0, env_ids, src_value)
+                continue
+            dst.set(key, src_value)
+
+    def _refresh_current_reference(
+        self, env_ids: torch.Tensor | None = None, *, advance: bool = False
+    ) -> None:
+        reference = self.trajectory_manager.sample(env_ids=env_ids, advance=advance)
+        if env_ids is None or self.current_reference is None:
+            self.current_reference = reference
+        else:
+            self._index_copy_reference_rows_(self.current_reference, reference, env_ids)
+        self._invalidate_mdp_cache()
+
     def _reset_idx(self, env_ids: torch.Tensor):
         """Reset the specified environments.
 
@@ -510,12 +941,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # Reset trajectory tracking (reassigns trajectories and resets steps)
         self.trajectory_manager.reset_envs(env_ids.clone())
 
-        # Get initial reference data for all envs (manager handles indexing).
-        # IMPORTANT: advance=False here so that non-reset envs are NOT pushed
-        # forward an extra frame.  The per-step advance happens once in step().
-        self.current_reference = self.trajectory_manager.sample(
-            env_ids=None, advance=False
-        )
+        # Refresh only the resetting rows before reset events consume current_reference.
+        self._refresh_current_reference(env_ids, advance=False)
 
         # Trigger the reset events (curriculum, sensors, managers, etc.) using tensor indices
         result = super()._reset_idx(env_ids)  # type: ignore[arg-type]
@@ -552,9 +979,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # Standard RL stepping path.
         if not self.replay_only:
             # Get next reference data point (advance=True to move to next step)
-            self.current_reference = self.trajectory_manager.sample(
-                env_ids=None, advance=True
-            )
+            self._refresh_current_reference(advance=True)
             step_return = super().step(action)
             # self._update_reference_velocity_visualizer()
             return step_return
@@ -569,6 +994,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # This avoids double-advance while keeping reward computation aligned with frame t.
         reference_for_step = self.trajectory_manager.sample(env_ids=None, advance=True)
         self.current_reference = reference_for_step
+        self._invalidate_mdp_cache()
         self._replay_reference(reference=reference_for_step)
         self.scene.update(dt=0.0)
 
@@ -636,7 +1062,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             self.event_manager.apply(mode="interval", dt=self.step_dt)
         # Expose post-step reference (frame t+1) for observations/outputs, matching
         # ManagerBasedRLEnv command timing after command_manager.compute().
-        self.current_reference = self.trajectory_manager.sample(advance=False)
+        self._refresh_current_reference(advance=False)
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs
         self.obs_buf = self.observation_manager.compute(update_history=True)
@@ -677,10 +1103,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         elif key == "xquat" and "body_quat_w" in self.current_reference:
             data = self.current_reference["body_quat_w"]
         elif key == "cvel":
-            body_ang_vel = self.current_reference.get("body_ang_vel_w")
-            body_lin_vel = self.current_reference.get("body_lin_vel_w")
-            if body_ang_vel is not None and body_lin_vel is not None:
-                data = torch.cat([body_ang_vel, body_lin_vel], dim=-1)
+            data = self._get_reference_cvel_fast()
 
         if data is None:
             available_keys = [str(k) for k in self.current_reference.keys()]
@@ -941,6 +1364,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # Refresh cached kinematics buffers (e.g. root_lin_vel_b) after direct state writes.
         self.scene.update(dt=0.0)
         self.robot.update(dt=0.0)
+        self._invalidate_mdp_cache()
 
     def _get_tracked_reference_root_pos_w(self) -> torch.Tensor | None:
         """Return tracked reference root positions in world frame for all environments."""

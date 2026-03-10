@@ -14,6 +14,8 @@ setup_directories() {
         "${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/pip" \
         "${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/glcache" \
         "${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/computecache" \
+        "${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/triton" \
+        "${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/torchinductor" \
         "${CLUSTER_ISAAC_SIM_CACHE_DIR}/home" \
         "${CLUSTER_ISAAC_SIM_CACHE_DIR}/logs" \
         "${CLUSTER_ISAAC_SIM_CACHE_DIR}/data" \
@@ -43,6 +45,9 @@ source $SCRIPT_DIR/../.env.base
 # Defaults to /home/$USER so Isaac Sim writes to a user path, but the path is
 # backed by scratch via bind mount below.
 container_home="${CLUSTER_CONTAINER_HOME:-/home/${USER}}"
+container_triton_cache_dir="${container_home}/.cache/triton"
+container_torchinductor_cache_dir="${container_home}/.cache/torchinductor"
+allow_torch_compile_debug="${CLUSTER_ALLOW_TORCH_COMPILE_DEBUG:-0}"
 
 # Construct PYTHONPATH entries from synced repos.
 # NOTE: We intentionally avoid "IsaacLab/source" because it makes "isaaclab" a namespace package
@@ -86,6 +91,8 @@ singularity exec \
     -B $TMPDIR/docker-isaac-sim/cache/pip:${DOCKER_USER_HOME}/.cache/pip:rw \
     -B $TMPDIR/docker-isaac-sim/cache/glcache:${DOCKER_USER_HOME}/.cache/nvidia/GLCache:rw \
     -B $TMPDIR/docker-isaac-sim/cache/computecache:${DOCKER_USER_HOME}/.nv/ComputeCache:rw \
+    -B ${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/triton:${container_triton_cache_dir}:rw \
+    -B ${CLUSTER_ISAAC_SIM_CACHE_DIR}/cache/torchinductor:${container_torchinductor_cache_dir}:rw \
     -B $TMPDIR/docker-isaac-sim/logs:${DOCKER_USER_HOME}/.nvidia-omniverse/logs:rw \
     -B $TMPDIR/docker-isaac-sim/data:${DOCKER_USER_HOME}/.local/share/ov/data:rw \
     -B $TMPDIR/docker-isaac-sim/documents:${DOCKER_USER_HOME}/Documents:rw \
@@ -95,7 +102,7 @@ singularity exec \
     -B ${CLUSTER_DATA_DIR}:/data:rw \
     --overlay $CLUSTER_ISAACLAB_DIR/$dir_name.img \
     --nv --containall $TMPDIR/$2.sif \
-    bash -c "export ACCEPT_EULA=${ACCEPT_EULA:-Y} && export PRIVACY_CONSENT=${PRIVACY_CONSENT:-Y} && export OMNI_KIT_ACCEPT_EULA=YES && export HOME=${container_home} && export XDG_CACHE_HOME=${container_home}/.cache && export XDG_DATA_HOME=${container_home}/.local/share && export ISAACLAB_WORKSPACE_PATH=/workspace/isaaclab/project && export ISAACLAB_PATH=/workspace/isaaclab/project/IsaacLab && export ISAACSIM_PATH=/workspace/isaaclab/project/IsaacLab/_isaac_sim && export ISAACLAB_DATA_DIR=/data && export PYTHONPATH=${container_pythonpath} && export WANDB_API_KEY=$(cat ~/.wandb_api_key) && cd /workspace/isaaclab/project && /isaac-sim/python.sh ${CLUSTER_PYTHON_EXECUTABLE} ${@:3}"
+    bash -c "export ACCEPT_EULA=${ACCEPT_EULA:-Y} && export PRIVACY_CONSENT=${PRIVACY_CONSENT:-Y} && export OMNI_KIT_ACCEPT_EULA=YES && export HOME=${container_home} && export XDG_CACHE_HOME=${container_home}/.cache && export XDG_DATA_HOME=${container_home}/.local/share && export ISAACLAB_WORKSPACE_PATH=/workspace/isaaclab/project && export ISAACLAB_PATH=/workspace/isaaclab/project/IsaacLab && export ISAACSIM_PATH=/workspace/isaaclab/project/IsaacLab/_isaac_sim && export ISAACLAB_DATA_DIR=/data && export PYTHONPATH=${container_pythonpath} && export WANDB_API_KEY=$(cat ~/.wandb_api_key) && export TRITON_CACHE_DIR=${container_triton_cache_dir} && export TORCHINDUCTOR_CACHE_DIR=${container_torchinductor_cache_dir} && export RL_WARNINGS=${RL_WARNINGS:-False} && if [ \"${allow_torch_compile_debug}\" != \"1\" ]; then unset TORCH_LOGS; export TORCHDYNAMO_VERBOSE=0; export TORCH_COMPILE_DEBUG=0; fi && cd /workspace/isaaclab/project && /isaac-sim/python.sh ${CLUSTER_PYTHON_EXECUTABLE} ${@:3}"
 
 # copy resulting cache files back to host
 rsync -azPv $TMPDIR/docker-isaac-sim $CLUSTER_ISAAC_SIM_CACHE_DIR/..

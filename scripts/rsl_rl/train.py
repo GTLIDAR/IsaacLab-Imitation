@@ -4,10 +4,13 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 """Script to train RL agent with RSL-RL."""
+# ruff: noqa: E402
 
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import json
+import statistics
 import sys
 
 from isaaclab.app import AppLauncher
@@ -49,6 +52,24 @@ parser.add_argument(
     "--max_iterations", type=int, default=None, help="RL Policy training iterations."
 )
 parser.add_argument(
+    "--perf_report",
+    action="store_true",
+    default=False,
+    help="Record per-iteration performance metrics and print a summary at the end.",
+)
+parser.add_argument(
+    "--perf_warmup_iterations",
+    type=int,
+    default=1,
+    help="Number of initial logged iterations to exclude from the final perf summary.",
+)
+parser.add_argument(
+    "--perf_json",
+    type=str,
+    default=None,
+    help="Optional path to write the final structured performance summary as JSON.",
+)
+parser.add_argument(
     "--distributed",
     action="store_true",
     default=False,
@@ -88,6 +109,7 @@ simulation_app = app_launcher.app
 
 import importlib.metadata as metadata
 import platform
+
 from packaging import version
 
 # check minimum supported rsl-rl version
@@ -121,15 +143,14 @@ if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
 
 """Rest everything follows."""
 
-import gymnasium as gym
 import logging
 import os
 import time
-import torch
 from datetime import datetime
 
-from rsl_rl.runners import DistillationRunner, OnPolicyRunner
-
+import gymnasium as gym
+import isaaclab_tasks  # noqa: F401
+import torch
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -139,12 +160,10 @@ from isaaclab.envs import (
 )
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
-
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
-
-import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
+from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -155,6 +174,98 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+def _install_perf_report_hook(runner, enabled: bool) -> list[dict[str, float | int]]:
+    metrics: list[dict[str, float | int]] = []
+    if not enabled:
+        return metrics
+
+    original_log = runner.log
+
+    def wrapped_log(locs: dict, *args, **kwargs):
+        collection_time = float(locs["collection_time"])
+        learn_time = float(locs["learn_time"])
+        iteration_time = collection_time + learn_time
+        collection_size = (
+            runner.num_steps_per_env
+            * runner.env.num_envs
+            * getattr(runner, "gpu_world_size", 1)
+        )
+        fps = (
+            float(collection_size / iteration_time)
+            if iteration_time > 0.0
+            else float("inf")
+        )
+        metrics.append(
+            {
+                "iteration": int(locs["it"]),
+                "collection_size": int(collection_size),
+                "fps": fps,
+                "collection_time_s": collection_time,
+                "learn_time_s": learn_time,
+                "iteration_time_s": iteration_time,
+            }
+        )
+        return original_log(locs, *args, **kwargs)
+
+    runner.log = wrapped_log
+    return metrics
+
+
+def _build_perf_summary(
+    metrics: list[dict[str, float | int]], warmup_iterations: int
+) -> dict[str, object] | None:
+    if len(metrics) == 0:
+        return None
+
+    warmup_iterations = max(int(warmup_iterations), 0)
+    summary_metrics = (
+        metrics[warmup_iterations:] if len(metrics) > warmup_iterations else metrics
+    )
+    fps_values = [float(metric["fps"]) for metric in summary_metrics]
+    collection_values = [
+        float(metric["collection_time_s"]) for metric in summary_metrics
+    ]
+    learn_values = [float(metric["learn_time_s"]) for metric in summary_metrics]
+    iteration_values = [float(metric["iteration_time_s"]) for metric in summary_metrics]
+
+    return {
+        "logged_iterations": len(metrics),
+        "warmup_iterations_skipped": min(warmup_iterations, len(metrics)),
+        "used_iterations": len(summary_metrics),
+        "collection_size": int(summary_metrics[0]["collection_size"]),
+        "fps_mean": statistics.fmean(fps_values),
+        "fps_median": statistics.median(fps_values),
+        "fps_min": min(fps_values),
+        "fps_max": max(fps_values),
+        "collection_time_mean_s": statistics.fmean(collection_values),
+        "learn_time_mean_s": statistics.fmean(learn_values),
+        "iteration_time_mean_s": statistics.fmean(iteration_values),
+        "per_iteration": metrics,
+    }
+
+
+def _print_perf_summary(summary: dict[str, object]) -> None:
+    print("[PERF] Summary")
+    print(
+        "[PERF] "
+        f"iterations={summary['used_iterations']} "
+        f"(logged={summary['logged_iterations']}, warmup_skipped={summary['warmup_iterations_skipped']})"
+    )
+    print(
+        "[PERF] "
+        f"fps_mean={summary['fps_mean']:.2f} "
+        f"fps_median={summary['fps_median']:.2f} "
+        f"fps_min={summary['fps_min']:.2f} "
+        f"fps_max={summary['fps_max']:.2f}"
+    )
+    print(
+        "[PERF] "
+        f"collection_time_mean_s={summary['collection_time_mean_s']:.4f} "
+        f"learn_time_mean_s={summary['learn_time_mean_s']:.4f} "
+        f"iteration_time_mean_s={summary['iteration_time_mean_s']:.4f}"
+    )
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -267,6 +378,7 @@ def main(
         )
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+    perf_metrics = _install_perf_report_hook(runner, args_cli.perf_report)
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
@@ -283,6 +395,22 @@ def main(
     runner.learn(
         num_learning_iterations=agent_cfg.max_iterations, init_at_random_ep_len=True
     )
+    perf_summary = _build_perf_summary(perf_metrics, args_cli.perf_warmup_iterations)
+    if perf_summary is not None:
+        perf_summary.update(
+            {
+                "task": args_cli.task,
+                "num_envs": int(env_cfg.scene.num_envs),
+                "max_iterations": int(agent_cfg.max_iterations),
+                "device": str(agent_cfg.device),
+                "log_dir": log_dir,
+            }
+        )
+        _print_perf_summary(perf_summary)
+        if args_cli.perf_json is not None:
+            with open(args_cli.perf_json, "w", encoding="utf-8") as perf_file:
+                json.dump(perf_summary, perf_file, indent=2)
+            print(f"[PERF] Wrote summary JSON to {args_cli.perf_json}")
 
     print(f"Training time: {round(time.time() - start_time, 2)} seconds")
 

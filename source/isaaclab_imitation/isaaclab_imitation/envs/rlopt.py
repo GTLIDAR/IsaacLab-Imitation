@@ -10,13 +10,8 @@ from collections.abc import Mapping
 
 import gymnasium as gym
 import torch
-from rlopt.agent import (
-    FastTD3RLOptConfig,
-    IPMDRLOptConfig,
-    PPORLOptConfig,
-    SACRLOptConfig,
-)  # noqa: F401
-from rlopt.config_base import RLOptConfig
+from rlopt.agent import FastTD3RLOptConfig, IPMDRLOptConfig, PPORLOptConfig, SACRLOptConfig  # noqa: F401
+from rlopt.config_base import RLOptConfig  # noqa: F401
 from torchrl.data.tensor_specs import Composite, Unbounded
 from torchrl.envs.libs.gym import (
     GymWrapper,

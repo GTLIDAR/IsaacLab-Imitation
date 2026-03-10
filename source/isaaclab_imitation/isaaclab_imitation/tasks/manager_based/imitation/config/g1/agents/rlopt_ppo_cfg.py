@@ -26,7 +26,7 @@ class G1ImitationRLOptPPOConfig(PPORLOptConfig):
         self.collector.frames_per_batch = 24
         self.replay_buffer.size = 4096 * 24
 
-        self.loss.epochs = 5
+        self.loss.epochs = 1
         self.loss.mini_batch_size = 4096 * 24 // 4
         self.loss.loss_critic_type = "l2"
 
