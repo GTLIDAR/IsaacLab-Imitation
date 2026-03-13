@@ -807,7 +807,7 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
         "joint_names": G1_29DOF_JOINT_NAMES,
     }
     reset_schedule: str = "random"
-    refresh_zarr_dataset: bool = False
+    refresh_zarr_dataset: bool = True
     require_npz_body_states: bool = True
     autodetect_motion_fps: bool = True
     # -- optional explicit cfg overrides (no env-var controls)
@@ -821,6 +821,8 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
     lafan1_reset_schedule: str | None = None
     lafan1_wrap_steps: bool | None = None
     lafan1_reference_start_frame: int | None = None
+    reconstructed_reference_action: bool = True
+    reconstructed_reference_action_mode = "next_pose"
 
     def _lafan_source_entries(self) -> list[dict[str, Any]]:
         try:

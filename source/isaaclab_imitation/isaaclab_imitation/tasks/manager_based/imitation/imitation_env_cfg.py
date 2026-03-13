@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 from dataclasses import MISSING
+from typing import Literal
 
 import isaaclab.sim as sim_utils
 import isaaclab.terrains as terrain_gen
@@ -317,6 +318,10 @@ class ImitationLearningEnvCfg(ManagerBasedRLEnvCfg):
     }
     replay_reference: bool = False
     replay_only: bool = False
+    reconstructed_reference_action: bool = True
+    reconstructed_reference_action_mode: Literal["next_pose", "pd_compensated"] = (
+        "pd_compensated"
+    )
     # Reference joint names for the robot from the reference qpos order (this is the order of G1 in loco-mujoco)
     reference_joint_names: list[str] = [
         "root_x",

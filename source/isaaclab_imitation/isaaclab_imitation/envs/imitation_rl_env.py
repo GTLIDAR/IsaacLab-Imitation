@@ -7,10 +7,12 @@ from typing import Any, TypeAlias
 import isaaclab.utils.math as math_utils
 import numpy as np
 import torch
+import torch.nn.functional as F
 import zarr
 from isaaclab.assets import Articulation
 from isaaclab.envs.common import VecEnvStepReturn
 from isaaclab.envs.manager_based_rl_env import ManagerBasedRLEnv
+from isaaclab.envs.mdp.actions.joint_actions import JointPositionAction
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import (
     FRAME_MARKER_CFG,
@@ -187,7 +189,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             elif len(reference_joint_names) != len(dataset_joint_names):
                 reference_joint_names = dataset_joint_names
 
-        first_qpos = rb[0].get("qpos")
+        first_transition = rb[0]
+        first_qpos = first_transition.get("qpos")
         if first_qpos is not None:
             expected_reference_joint_dim = int(first_qpos.shape[-1]) - 7
             if len(reference_joint_names) != expected_reference_joint_dim:
@@ -200,6 +203,21 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         assert len(reference_joint_names) > 0 and len(target_joint_names) > 0, (
             "Reference and target joint names must have the length greater than 0"
         )
+        self._reference_has_aligned_next = (
+            first_transition.get("next_qpos") is not None
+            and first_transition.get("next_qvel") is not None
+        )
+        self._reconstructed_reference_action_enabled = bool(
+            getattr(cfg, "reconstructed_reference_action", False)
+        )
+        self._reconstructed_reference_action_mode = str(
+            getattr(cfg, "reconstructed_reference_action_mode", "next_pose")
+        )
+        if self._reconstructed_reference_action_enabled and not self._reference_has_aligned_next:
+            raise ValueError(
+                "reconstructed_reference_action=True requires transition-aligned next_* reference data. "
+                "Rebuild the cached dataset with `refresh_zarr_dataset=True`."
+            )
 
         # Initialize the trajectory manager
         self.trajectory_manager = ParallelTrajectoryManager(
@@ -251,6 +269,13 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             self.replay_reference = True
         self._expert_sampler_warned_action_fallback = False
         self._expert_sampler_warned_unknown_terms: set[str] = set()
+        self._reconstructed_reference_action_term: JointPositionAction | None = None
+        self._reconstructed_reference_target_to_action_index: (
+            torch.Tensor | None
+        ) = None
+        self._reconstructed_reference_action_pd_ratio_target: (
+            torch.Tensor | None
+        ) = None
 
         # Store initial poses for replay
         self._init_root_pos = torch.zeros((num_envs, 3), device=device)
@@ -273,6 +298,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         self.robot: Articulation = self.scene["robot"]
+        self._setup_reconstructed_reference_action_cache()
         self._finalize_reference_body_names()
         self._initialize_mdp_fast_paths()
         self._setup_reference_velocity_visualizer()
@@ -322,6 +348,455 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         site_names = dataset_group.attrs.get("site_names", [])
         self.reference_body_names = list(body_names) if body_names is not None else []
         self.reference_site_names = list(site_names) if site_names is not None else []
+
+    def _resolve_static_joint_parameter(
+        self, values: torch.Tensor, *, name: str
+    ) -> torch.Tensor:
+        """Collapse per-env joint parameters to a single vector for cached reconstruction."""
+        tensor = values.to(device=self.device, dtype=torch.float32)
+        if tensor.ndim == 1:
+            return tensor
+        if tensor.ndim != 2:
+            raise ValueError(f"Unexpected {name} tensor shape {tuple(tensor.shape)}.")
+        reference = tensor[0]
+        if tensor.shape[0] > 1 and not torch.allclose(tensor, reference.unsqueeze(0)):
+            logger.warning(
+                "Reference action reconstruction expected env-invariant %s; using env 0 values.",
+                name,
+            )
+        return reference
+
+    def _compute_reconstructed_reference_action_targets(
+        self,
+        *,
+        mode: str,
+        kp_target: torch.Tensor | None,
+        kd_target: torch.Tensor | None,
+        chunk_size: int = 65536,
+    ) -> torch.Tensor:
+        """Precompute reference joint position targets for every replay transition."""
+        tm = self.trajectory_manager
+        num_transitions = len(tm.rb)
+        cache = torch.empty(
+            (num_transitions, len(tm.target_joint_names)),
+            device=tm.storage_device,
+            dtype=torch.float32,
+        )
+        ratio = None
+        if mode == "pd_compensated":
+            if kp_target is None or kd_target is None:
+                raise ValueError("pd_compensated reconstruction requires Kp and Kd.")
+            safe_kp = torch.where(kp_target.abs() > 1.0e-8, kp_target, torch.ones_like(kp_target))
+            ratio = torch.where(kp_target.abs() > 1.0e-8, kd_target / safe_kp, torch.zeros_like(kd_target))
+        elif mode != "next_pose":
+            raise ValueError(
+                "Unsupported reconstructed_reference_action_mode: "
+                f"{mode!r}. Expected 'next_pose' or 'pd_compensated'."
+            )
+
+        for start in range(0, num_transitions, chunk_size):
+            end = min(start + chunk_size, num_transitions)
+            indices = torch.arange(
+                start, end, device=tm.storage_device, dtype=torch.int64
+            )
+            reference = tm.rb[indices]
+            if getattr(tm, "_device", None) is not None:
+                reference = reference.to(tm._device)
+            reference = tm._attach_reference_fields(reference, use_buffers=False)
+            next_joint_pos = reference.get(("next", "joint_pos"))
+            if next_joint_pos is None:
+                raise ValueError(
+                    "Transition-aligned next joint positions are missing from the replay buffer."
+                )
+            command_target = next_joint_pos
+            if ratio is not None:
+                command_target = command_target + reference["joint_vel"] * ratio
+            cache[start:end] = command_target.to(device=tm.storage_device)
+
+        return cache
+
+    def _setup_reconstructed_reference_action_cache(self) -> None:
+        """Initialize optional cached expert-action reconstruction after action manager setup."""
+        self.trajectory_manager.set_reconstructed_action_targets(None)
+        self._reconstructed_reference_action_term = None
+        self._reconstructed_reference_target_to_action_index = None
+        self._reconstructed_reference_action_pd_ratio_target = None
+        if not self._reference_has_aligned_next:
+            if self._reconstructed_reference_action_enabled:
+                raise ValueError(
+                    "reconstructed_reference_action=True requires transition-aligned next_* reference data. "
+                    "Rebuild the cached dataset with `refresh_zarr_dataset=True`."
+                )
+            return
+
+        try:
+            action_term = self.action_manager.get_term("joint_pos")
+        except Exception:
+            if self._reconstructed_reference_action_enabled:
+                raise
+            return
+        if not isinstance(action_term, JointPositionAction):
+            if self._reconstructed_reference_action_enabled:
+                raise TypeError(
+                    "reconstructed_reference_action is only supported for JointPositionAction."
+                )
+            return
+
+        target_joint_names = list(self.trajectory_manager.target_joint_names)
+        target_name_to_index = {name: idx for idx, name in enumerate(target_joint_names)}
+        action_joint_names = list(action_term._joint_names)
+        missing_joint_names = [
+            name for name in action_joint_names if name not in target_name_to_index
+        ]
+        if missing_joint_names:
+            raise ValueError(
+                "JointPositionAction joints are missing from target_joint_names: "
+                f"{missing_joint_names}"
+            )
+
+        target_joint_ids, _ = self.robot.find_joints(target_joint_names, preserve_order=True)
+        kp_target = None
+        kd_target = None
+        if self._reconstructed_reference_action_mode == "pd_compensated":
+            kp_target = self._resolve_static_joint_parameter(
+                self.robot.data.default_joint_stiffness[:, target_joint_ids],
+                name="joint stiffness",
+            )
+            kd_target = self._resolve_static_joint_parameter(
+                self.robot.data.default_joint_damping[:, target_joint_ids],
+                name="joint damping",
+            )
+            safe_kp = torch.where(
+                kp_target.abs() > 1.0e-8, kp_target, torch.ones_like(kp_target)
+            )
+            self._reconstructed_reference_action_pd_ratio_target = torch.where(
+                kp_target.abs() > 1.0e-8,
+                kd_target / safe_kp,
+                torch.zeros_like(kd_target),
+            )
+
+        self._reconstructed_reference_action_term = action_term
+        self._reconstructed_reference_target_to_action_index = torch.tensor(
+            [target_name_to_index[name] for name in action_joint_names],
+            device=self.device,
+            dtype=torch.int64,
+        )
+        if not self._reconstructed_reference_action_enabled:
+            return
+
+        cached_targets = self._compute_reconstructed_reference_action_targets(
+            mode=self._reconstructed_reference_action_mode,
+            kp_target=kp_target,
+            kd_target=kd_target,
+        )
+        self.trajectory_manager.set_reconstructed_action_targets(cached_targets)
+
+    def _gather_action_term_parameter(
+        self,
+        value: torch.Tensor | float,
+        *,
+        env_ids: torch.Tensor,
+        template: torch.Tensor,
+    ) -> torch.Tensor:
+        """Gather an action-term parameter for the sampled env ids."""
+        if isinstance(value, torch.Tensor):
+            if value.ndim == 2:
+                return value.index_select(0, env_ids).to(
+                    device=template.device, dtype=template.dtype
+                )
+            return value.to(device=template.device, dtype=template.dtype)
+        return torch.full_like(template, float(value))
+
+    def _raw_to_processed_action(
+        self,
+        raw_action: torch.Tensor,
+        *,
+        env_ids: torch.Tensor,
+        action_term: JointPositionAction | None = None,
+    ) -> torch.Tensor:
+        """Apply the action term's affine transform and clipping to raw actions."""
+        if action_term is None:
+            action_term = self._reconstructed_reference_action_term
+        if action_term is None:
+            raise ValueError("JointPositionAction term is unavailable for action processing.")
+
+        raw_action = raw_action.to(device=self.device, dtype=torch.float32)
+        env_ids = env_ids.to(device=self.device, dtype=torch.int64)
+        offset = self._gather_action_term_parameter(
+            action_term._offset, env_ids=env_ids, template=raw_action
+        )
+        scale = self._gather_action_term_parameter(
+            action_term._scale, env_ids=env_ids, template=raw_action
+        )
+        processed_action = raw_action * scale + offset
+        if getattr(action_term.cfg, "clip", None) is not None:
+            clip = action_term._clip.index_select(0, env_ids).to(
+                device=self.device, dtype=processed_action.dtype
+            )
+            processed_action = torch.clamp(
+                processed_action, min=clip[..., 0], max=clip[..., 1]
+            )
+        return processed_action
+
+    def _processed_to_raw_action(
+        self,
+        processed_action: torch.Tensor,
+        *,
+        env_ids: torch.Tensor,
+        action_term: JointPositionAction | None = None,
+    ) -> torch.Tensor:
+        """Invert the unclipped affine transform from processed to raw action space."""
+        if action_term is None:
+            action_term = self._reconstructed_reference_action_term
+        if action_term is None:
+            raise ValueError("JointPositionAction term is unavailable for action processing.")
+
+        processed_action = processed_action.to(device=self.device, dtype=torch.float32)
+        env_ids = env_ids.to(device=self.device, dtype=torch.int64)
+        offset = self._gather_action_term_parameter(
+            action_term._offset, env_ids=env_ids, template=processed_action
+        )
+        scale = self._gather_action_term_parameter(
+            action_term._scale, env_ids=env_ids, template=processed_action
+        )
+        safe_scale = torch.where(scale.abs() > 1.0e-8, scale, torch.ones_like(scale))
+        return torch.where(
+            scale.abs() > 1.0e-8,
+            (processed_action - offset) / safe_scale,
+            torch.zeros_like(processed_action),
+        )
+
+    def _reconstruct_reference_action_from_reference(
+        self,
+        reference: TensorDict,
+        *,
+        env_ids: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor] | None:
+        """Reconstruct raw and processed reference actions from a live reference batch."""
+        action_term = self._reconstructed_reference_action_term
+        action_index = self._reconstructed_reference_target_to_action_index
+        if action_term is None or action_index is None:
+            return None
+
+        next_joint_pos = reference.get(("next", "joint_pos"))
+        if next_joint_pos is None:
+            return None
+        processed_reference_action = next_joint_pos.to(
+            device=self.device, dtype=torch.float32
+        ).index_select(-1, action_index)
+
+        if self._reconstructed_reference_action_pd_ratio_target is not None:
+            joint_vel = reference.get("joint_vel")
+            if joint_vel is None:
+                return None
+            pd_ratio = self._reconstructed_reference_action_pd_ratio_target.to(
+                device=self.device, dtype=processed_reference_action.dtype
+            ).index_select(0, action_index)
+            processed_reference_action = (
+                processed_reference_action
+                + joint_vel.to(device=self.device, dtype=processed_reference_action.dtype).index_select(
+                    -1, action_index
+                )
+                * pd_ratio
+            )
+
+        if env_ids is None:
+            env_ids = torch.arange(
+                processed_reference_action.shape[0],
+                device=self.device,
+                dtype=torch.int64,
+            )
+        else:
+            env_ids = env_ids.to(device=self.device, dtype=torch.int64)
+
+        if getattr(action_term.cfg, "clip", None) is not None:
+            clip = action_term._clip.index_select(0, env_ids).to(
+                device=self.device, dtype=processed_reference_action.dtype
+            )
+            processed_reference_action = torch.clamp(
+                processed_reference_action, min=clip[..., 0], max=clip[..., 1]
+            )
+
+        raw_reference_action = self._processed_to_raw_action(
+            processed_reference_action,
+            env_ids=env_ids,
+            action_term=action_term,
+        )
+        return raw_reference_action, processed_reference_action
+
+    @staticmethod
+    def _compute_action_alignment_metrics(
+        policy_action: torch.Tensor,
+        reference_action: torch.Tensor,
+        *,
+        prefix: str,
+        include_reference_nan_frac: bool = False,
+    ) -> dict[str, float]:
+        """Aggregate alignment metrics between policy and reconstructed reference actions."""
+        if policy_action.ndim == 1:
+            policy_action = policy_action.unsqueeze(0)
+        if reference_action.ndim == 1:
+            reference_action = reference_action.unsqueeze(0)
+
+        policy_action = policy_action.detach().to(dtype=torch.float32)
+        reference_action = reference_action.detach().to(dtype=torch.float32)
+        reference_nan_frac = float((~torch.isfinite(reference_action)).float().mean().item())
+
+        policy_action = torch.nan_to_num(policy_action, nan=0.0, posinf=0.0, neginf=0.0)
+        reference_action = torch.nan_to_num(
+            reference_action, nan=0.0, posinf=0.0, neginf=0.0
+        )
+
+        policy_flat = policy_action.reshape(policy_action.shape[0], -1)
+        reference_flat = reference_action.reshape(reference_action.shape[0], -1)
+        diff_flat = policy_flat - reference_flat
+        per_env_abs_mean = diff_flat.abs().mean(dim=-1)
+        per_env_mse = diff_flat.square().mean(dim=-1)
+
+        metrics = {
+            f"{prefix}_mae": float(per_env_abs_mean.mean().item()),
+            f"{prefix}_mse": float(per_env_mse.mean().item()),
+            f"{prefix}_rmse": float(per_env_mse.sqrt().mean().item()),
+            f"{prefix}_max_abs": float(diff_flat.abs().amax(dim=-1).mean().item()),
+            f"{prefix}_cosine": float(
+                F.cosine_similarity(policy_flat, reference_flat, dim=-1, eps=1.0e-8)
+                .mean()
+                .item()
+            ),
+            f"{prefix}_policy_abs_mean": float(policy_flat.abs().mean().item()),
+            f"{prefix}_reference_abs_mean": float(reference_flat.abs().mean().item()),
+        }
+        if include_reference_nan_frac:
+            metrics[f"{prefix}_reference_nan_frac"] = reference_nan_frac
+        return metrics
+
+    def _compute_rollout_reference_action_log(
+        self, policy_raw_action: torch.Tensor
+    ) -> dict[str, float]:
+        """Compare the rollout action against the aligned reconstructed reference action."""
+        if self.current_reference is None:
+            return {}
+
+        reconstructed = self._reconstruct_reference_action_from_reference(
+            self.current_reference
+        )
+        if reconstructed is None:
+            return {}
+        reference_raw_action, reference_processed_action = reconstructed
+
+        policy_raw_action = policy_raw_action.to(device=self.device, dtype=torch.float32)
+        if policy_raw_action.shape != reference_raw_action.shape:
+            return {}
+
+        env_ids = torch.arange(
+            policy_raw_action.shape[0], device=self.device, dtype=torch.int64
+        )
+        policy_processed_action = self._raw_to_processed_action(
+            policy_raw_action,
+            env_ids=env_ids,
+        )
+
+        metrics = self._compute_action_alignment_metrics(
+            policy_raw_action,
+            reference_raw_action,
+            prefix="rollout_action/raw",
+            include_reference_nan_frac=True,
+        )
+        metrics.update(
+            self._compute_action_alignment_metrics(
+                policy_processed_action,
+                reference_processed_action,
+                prefix="rollout_action/processed",
+            )
+        )
+        return metrics
+
+    @staticmethod
+    def _compute_rollout_state_alignment_metrics(
+        actual_state: torch.Tensor,
+        reference_state: torch.Tensor,
+        *,
+        prefix: str,
+    ) -> dict[str, float]:
+        """Aggregate next-state tracking metrics against the aligned reference transition."""
+        if actual_state.ndim == 1:
+            actual_state = actual_state.unsqueeze(0)
+        if reference_state.ndim == 1:
+            reference_state = reference_state.unsqueeze(0)
+
+        actual_state = actual_state.detach().to(dtype=torch.float32)
+        reference_state = reference_state.detach().to(dtype=torch.float32)
+        reference_nan_frac = float((~torch.isfinite(reference_state)).float().mean().item())
+
+        actual_state = torch.nan_to_num(actual_state, nan=0.0, posinf=0.0, neginf=0.0)
+        reference_state = torch.nan_to_num(
+            reference_state, nan=0.0, posinf=0.0, neginf=0.0
+        )
+        diff = actual_state - reference_state
+        per_env_abs_mean = diff.abs().reshape(diff.shape[0], -1).mean(dim=-1)
+        per_env_mse = diff.square().reshape(diff.shape[0], -1).mean(dim=-1)
+        return {
+            f"{prefix}_mae": float(per_env_abs_mean.mean().item()),
+            f"{prefix}_mse": float(per_env_mse.mean().item()),
+            f"{prefix}_rmse": float(per_env_mse.sqrt().mean().item()),
+            f"{prefix}_max_abs": float(
+                diff.abs().reshape(diff.shape[0], -1).amax(dim=-1).mean().item()
+            ),
+            f"{prefix}_reference_nan_frac": reference_nan_frac,
+        }
+
+    def _compute_rollout_reference_state_log(self) -> dict[str, float]:
+        """Compare the post-step robot state against the aligned reference next state."""
+        if self.current_reference is None:
+            return {}
+
+        next_joint_pos = self.current_reference.get(("next", "joint_pos"))
+        next_joint_vel = self.current_reference.get(("next", "joint_vel"))
+        if next_joint_pos is None or next_joint_vel is None:
+            return {}
+
+        metrics = self._compute_rollout_state_alignment_metrics(
+            self.robot.data.joint_pos,
+            next_joint_pos.to(device=self.device, dtype=torch.float32),
+            prefix="rollout_state/joint_pos",
+        )
+        metrics.update(
+            self._compute_rollout_state_alignment_metrics(
+                self.robot.data.joint_vel,
+                next_joint_vel.to(device=self.device, dtype=torch.float32),
+                prefix="rollout_state/joint_vel",
+            )
+        )
+        return metrics
+
+    def _sample_reconstructed_reference_actions(
+        self,
+        *,
+        global_indices: torch.Tensor,
+        env_ids: torch.Tensor,
+    ) -> torch.Tensor | None:
+        """Convert cached target joint positions into raw policy actions."""
+        if self._reconstructed_reference_action_term is None:
+            return None
+        if self._reconstructed_reference_target_to_action_index is None:
+            return None
+
+        cached_targets = self.trajectory_manager.get_reconstructed_action_targets(global_indices)
+        if cached_targets is None:
+            return None
+
+        env_ids = env_ids.to(device=self.device, dtype=torch.int64)
+        q_cmd = cached_targets.to(device=self.device, dtype=torch.float32).index_select(
+            -1, self._reconstructed_reference_target_to_action_index
+        )
+        action_term = self._reconstructed_reference_action_term
+
+        if getattr(action_term.cfg, "clip", None) is not None:
+            clip = action_term._clip.index_select(0, env_ids).to(
+                device=self.device, dtype=q_cmd.dtype
+            )
+            q_cmd = torch.clamp(q_cmd, min=clip[..., 0], max=clip[..., 1])
+        return self._processed_to_raw_action(q_cmd, env_ids=env_ids, action_term=action_term)
 
     def _finalize_reference_body_names(self) -> None:
         """Improve reference body-name mapping for datasets that only provide generic names."""
@@ -980,7 +1455,14 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if not self.replay_only:
             # Get next reference data point (advance=True to move to next step)
             self._refresh_current_reference(advance=True)
+            rollout_action_log = self._compute_rollout_reference_action_log(
+                action.to(self.device)
+            )
             step_return = super().step(action)
+            rollout_state_log = self._compute_rollout_reference_state_log()
+            if len(rollout_action_log) > 0 or len(rollout_state_log) > 0:
+                self.extras.setdefault("log", {}).update(rollout_action_log)
+                self.extras.setdefault("log", {}).update(rollout_state_log)
             # self._update_reference_velocity_visualizer()
             return step_return
 
@@ -1134,45 +1616,49 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
     def _sample_reference_batch_for_expert(
         self, batch_size: int
-    ) -> tuple[TensorDict, torch.Tensor]:
-        """Sample random reference states without advancing env manager state."""
+    ) -> tuple[TensorDict, torch.Tensor, torch.Tensor]:
+        """Sample random reference transitions without advancing env manager state."""
         if batch_size <= 0:
             raise ValueError("batch_size must be > 0.")
 
-        tm = self.trajectory_manager
-        tm_device = tm.env_traj_rank.device
-        env_ids_tm = torch.randint(
-            low=0,
-            high=self.num_envs,
-            size=(batch_size,),
-            device=tm_device,
-            dtype=torch.int64,
+        reference, env_ids_tm, global_indices = (
+            self.trajectory_manager.sample_random_transitions(batch_size)
         )
-        traj_ranks = tm.env_traj_rank[env_ids_tm]
-        lengths = tm._length[traj_ranks].clamp(min=1)
-        random_steps = torch.floor(
-            torch.rand(batch_size, device=tm_device) * lengths.to(dtype=torch.float32)
-        ).to(dtype=torch.int64)
-        global_indices = (tm._start[traj_ranks] + random_steps).clamp(
-            min=tm._start[traj_ranks], max=tm._end[traj_ranks] - 1
+        return (
+            reference.to(self.device),
+            env_ids_tm.to(self.device),
+            global_indices.to(self.device),
         )
-
-        reference = tm.rb[global_indices]
-        if getattr(tm, "_device", None) is not None:
-            reference = reference.to(tm._device)
-        reference = tm._attach_reference_fields(
-            reference, traj_ranks=traj_ranks, use_buffers=False
-        )
-
-        return reference.to(self.device), env_ids_tm.to(self.device)
 
     def _reference_obs_by_term(
-        self, reference: TensorDict, env_ids: torch.Tensor
+        self,
+        reference: TensorDict,
+        env_ids: torch.Tensor,
+        *,
+        prefix: tuple[str, ...] = (),
     ) -> dict[str, torch.Tensor]:
         """Convert sampled reference data to observation-compatible tensors."""
         env_ids = env_ids.to(dtype=torch.int64, device=self.device)
+        key = (lambda name: name) if len(prefix) == 0 else (lambda name: (*prefix, name))
+        root_pos_ref = reference.get(key("root_pos"))
+        root_quat_ref = reference.get(key("root_quat"))
+        root_lin_vel_ref = reference.get(key("root_lin_vel"))
+        root_ang_vel_ref = reference.get(key("root_ang_vel"))
+        joint_pos_ref = reference.get(key("joint_pos"))
+        joint_vel_ref = reference.get(key("joint_vel"))
+        if (
+            root_pos_ref is None
+            or root_quat_ref is None
+            or root_lin_vel_ref is None
+            or root_ang_vel_ref is None
+            or joint_pos_ref is None
+            or joint_vel_ref is None
+        ):
+            raise KeyError(
+                f"Reference batch is missing fields for prefix {prefix or ('current',)}."
+            )
         root_pos_w, root_quat_w_opt = self._transform_reference_pose_to_world(
-            reference["root_pos"], reference["root_quat"], env_ids=env_ids
+            root_pos_ref, root_quat_ref, env_ids=env_ids
         )
         if root_quat_w_opt is None:
             raise RuntimeError(
@@ -1182,16 +1668,56 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         env_origins = self.scene.env_origins.index_select(0, env_ids)
         root_pos = root_pos_w - env_origins
         align_quat, _ = self._get_reference_alignment_transform(env_ids)
-        root_lin_vel = math_utils.quat_apply(align_quat, reference["root_lin_vel"])
-        root_ang_vel = math_utils.quat_apply(align_quat, reference["root_ang_vel"])
+        root_lin_vel = math_utils.quat_apply(align_quat, root_lin_vel_ref)
+        root_ang_vel = math_utils.quat_apply(align_quat, root_ang_vel_ref)
+        default_joint_pos = self.robot.data.default_joint_pos.index_select(0, env_ids)
+        default_joint_vel = self.robot.data.default_joint_vel.index_select(0, env_ids)
+        batch_size = int(env_ids.shape[0])
+        identity_rot6d = torch.zeros(
+            (batch_size, 6),
+            device=self.device,
+            dtype=root_quat_w.dtype,
+        )
+        identity_rot6d[:, 0] = 1.0
+        identity_rot6d[:, 4] = 1.0
+        zero_anchor_pos = torch.zeros(
+            (batch_size, 3),
+            device=self.device,
+            dtype=root_pos.dtype,
+        )
+        current_action = getattr(self.action_manager, "action", None)
+        if isinstance(current_action, torch.Tensor):
+            zero_last_action = torch.zeros_like(current_action.index_select(0, env_ids))
+        else:
+            action_space = getattr(
+                self, "single_action_space", getattr(self, "action_space", None)
+            )
+            action_shape = (
+                tuple(int(dim) for dim in action_space.shape)
+                if action_space is not None and getattr(action_space, "shape", None)
+                else (1,)
+            )
+            zero_last_action = torch.zeros(
+                (batch_size, *action_shape),
+                device=self.device,
+                dtype=torch.float32,
+            )
 
         return {
-            "joint_pos": reference["joint_pos"],
-            "joint_vel": reference["joint_vel"],
+            "joint_pos": joint_pos_ref,
+            "joint_vel": joint_vel_ref,
+            "joint_pos_rel": joint_pos_ref - default_joint_pos,
+            "joint_vel_rel": joint_vel_ref - default_joint_vel,
             "root_pos": root_pos,
             "root_quat": root_quat_w,
             "root_lin_vel": root_lin_vel,
             "root_ang_vel": root_ang_vel,
+            "reference_motion": torch.cat([joint_pos_ref, joint_vel_ref], dim=-1),
+            # Expert-state observations treat robot and reference as aligned.
+            "reference_anchor_pos_b": zero_anchor_pos,
+            "reference_anchor_ori_b": identity_rot6d,
+            # Previous expert action is not available from the reference sampler here.
+            "last_action": zero_last_action,
             # Backward-compatible aliases.
             "base_lin_vel": root_lin_vel,
             "base_ang_vel": root_ang_vel,
@@ -1202,9 +1728,11 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         reference: TensorDict,
         env_ids: torch.Tensor,
         obs_keys: Sequence[NestedKey],
+        *,
+        prefix: tuple[str, ...] = (),
     ) -> dict[NestedKey, torch.Tensor] | None:
         """Map requested nested observation keys to tensors from sampled reference."""
-        term_values = self._reference_obs_by_term(reference, env_ids)
+        term_values = self._reference_obs_by_term(reference, env_ids, prefix=prefix)
         mapped_values: dict[NestedKey, torch.Tensor] = {}
         unknown_terms: list[str] = []
 
@@ -1258,13 +1786,26 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         expert_batch = TensorDict({}, batch_size=[batch_size], device=self.device)
         current_reference: TensorDict | None = None
+        current_env_ids: torch.Tensor | None = None
+        current_global_indices: torch.Tensor | None = None
 
-        if len(current_obs_keys) > 0:
-            current_reference, current_env_ids = (
+        needs_current_transition = (
+            len(current_obs_keys) > 0
+            or needs_action
+            or (len(next_obs_keys) > 0 and self._reference_has_aligned_next)
+        )
+
+        if needs_current_transition:
+            current_reference, current_env_ids, current_global_indices = (
                 self._sample_reference_batch_for_expert(batch_size)
             )
+
+        if len(current_obs_keys) > 0:
+            assert current_reference is not None and current_env_ids is not None
             mapped_current = self._reference_to_requested_obs(
-                current_reference, current_env_ids, current_obs_keys
+                current_reference,
+                current_env_ids,
+                current_obs_keys,
             )
             if mapped_current is None:
                 return None
@@ -1272,24 +1813,45 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 expert_batch.set(key, value)
 
         if len(next_obs_keys) > 0:
-            next_reference, next_env_ids = self._sample_reference_batch_for_expert(
-                batch_size
-            )
+            if self._reference_has_aligned_next:
+                assert current_reference is not None and current_env_ids is not None
+                next_reference = current_reference
+                next_env_ids = current_env_ids
+                next_prefix = ("next",)
+            else:
+                next_reference, next_env_ids, _ = self._sample_reference_batch_for_expert(
+                    batch_size
+                )
+                next_prefix = ()
             mapped_next = self._reference_to_requested_obs(
-                next_reference, next_env_ids, next_obs_keys
+                next_reference,
+                next_env_ids,
+                next_obs_keys,
+                prefix=next_prefix,
             )
             if mapped_next is None:
                 return None
             for key, value in mapped_next.items():
                 key_tuple = self._normalize_nested_key(key)
                 expert_batch.set(("next", *key_tuple), value)
-            if current_reference is None:
-                current_reference = next_reference
 
         if needs_action:
             sampled_action = None
+            if (
+                self._reconstructed_reference_action_enabled
+                and current_env_ids is not None
+                and current_global_indices is not None
+            ):
+                sampled_action = self._sample_reconstructed_reference_actions(
+                    global_indices=current_global_indices,
+                    env_ids=current_env_ids,
+                )
             if current_reference is not None and "action" in current_reference.keys():
-                sampled_action = current_reference.get("action")
+                sampled_action = (
+                    sampled_action
+                    if sampled_action is not None
+                    else current_reference.get("action")
+                )
             if sampled_action is None:
                 if not self._expert_sampler_warned_action_fallback:
                     logger.warning(
@@ -1309,7 +1871,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                     device=self.device,
                     dtype=torch.float32,
                 )
-            expert_batch.set("action", sampled_action.to(self.device))
+            sampled_action = sampled_action.to(self.device)
+            expert_batch.set("action", sampled_action)
+            expert_batch.set("expert_action", sampled_action)
 
         return expert_batch
 
