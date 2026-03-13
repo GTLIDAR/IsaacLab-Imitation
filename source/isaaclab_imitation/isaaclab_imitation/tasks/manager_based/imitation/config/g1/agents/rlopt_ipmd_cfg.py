@@ -72,7 +72,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # self.ipmd.reward_update_warmup_updates = 500
         # Keep expert reward minibatch aligned with PPO minibatch by default.
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
-        self.ipmd.bc_coef = 0.1
+        self.ipmd.bc_coef = 0.0
         # self.ipmd.reward_balance_policy_and_expert = True
         self.compile.compile = False
         self.trainer.progress_bar = True
