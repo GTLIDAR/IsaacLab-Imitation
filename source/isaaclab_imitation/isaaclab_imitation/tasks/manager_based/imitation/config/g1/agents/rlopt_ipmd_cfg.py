@@ -1,6 +1,6 @@
 from isaaclab.utils import configclass
 
-from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig, RLOptConfig
+from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
     G1_IPMD_REWARD_OBS_KEYS,
     G1_POLICY_OBS_KEYS,
@@ -52,7 +52,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.policy.num_cells = [512, 256, 128]
         self.value_function.num_cells = [512, 256, 128]
 
-        self.collector.total_frames = 30000 * 4096 * 24
+        self.collector.total_frames = 500_000_000
         self.save_interval = 500
 
         self.ipmd.reward_input_type = "s'"
@@ -72,15 +72,17 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # self.ipmd.reward_update_warmup_updates = 500
         # Keep expert reward minibatch aligned with PPO minibatch by default.
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
+        self.ipmd.bc_coef = 0.1
         # self.ipmd.reward_balance_policy_and_expert = True
         self.compile.compile = False
         self.trainer.progress_bar = True
-        self.ipmd.reward_output_scale = 0.25
-        self.ipmd.estimated_reward_clamp_min = 0.0
-        self.ipmd.estimated_reward_clamp_max = 0.25
-        self.ipmd.estimated_reward_mix_coeff = 0.3
+        self.ipmd.reward_output_scale = 1.0
+        self.ipmd.estimated_reward_clamp_min = -1.0
+        self.ipmd.estimated_reward_clamp_max = 1.0
+        self.ipmd.estimated_reward_mix_coeff = 1.0
         self.collector.no_cuda_sync = True
         self.log_level = "critical"
+        self.ipmd.reward_l2_coeff = 0.5
 
         # ------- unnecessary for ipmd simple --------- #
         # Trust-region / anti-collapse reward objective.
@@ -120,6 +122,6 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # self.ipmd.reward_scheduler = None
         # self.ipmd.reward_scheduler_kwargs = {}
         # self.ipmd.reward_scheduler_step = "update"
-        # self.ipmd.bc_loss_coeff = 0.00
+        # self.ipmd.bc_coef = 0.00
         # self.ipmd.bc_warmup_updates = 0
         # self.ipmd.bc_final_coeff = 0.0
