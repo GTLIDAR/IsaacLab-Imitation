@@ -521,8 +521,6 @@ class G1ObservationCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    invrwd: RewardCfg = RewardCfg()
-    ipmd_rwd: IPMDRewardCfg = IPMDRewardCfg()
 
 
 @configclass
