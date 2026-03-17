@@ -278,14 +278,13 @@ def main(
     if agent_cfg.trainer is None:
         agent_cfg.trainer = TrainerConfig()
     agent_cfg.trainer.log_interval = max(1, int(args_cli.log_interval))
-    # max iterations for training
+    agent_cfg.collector.frames_per_batch *= env_cfg.scene.num_envs
+    # max_iterations is expressed in rollout iterations, so override total_frames
+    # after scaling frames_per_batch to the actual number of simulated envs.
     if args_cli.max_iterations is not None:
         agent_cfg.collector.total_frames = (
-            args_cli.max_iterations
-            * agent_cfg.collector.total_frames
-            * env_cfg.scene.num_envs
+            args_cli.max_iterations * agent_cfg.collector.frames_per_batch
         )
-    agent_cfg.collector.frames_per_batch *= env_cfg.scene.num_envs
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed

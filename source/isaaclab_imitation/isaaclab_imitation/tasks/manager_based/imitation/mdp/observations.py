@@ -58,6 +58,13 @@ def reference_motion_command(
     return env._get_reference_motion_command_fast(asset_cfg.joint_ids)
 
 
+def agent_latent_command(
+    env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    del asset_cfg
+    return env.get_agent_latent_command()
+
+
 def reference_anchor_pos_b(
     env: ImitationRLEnv,
     anchor_body_name: str = "torso_link",

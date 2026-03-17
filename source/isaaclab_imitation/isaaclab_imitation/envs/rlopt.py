@@ -84,6 +84,28 @@ class IsaacLabWrapper(GymWrapper):
         # info dicts (often CUDA tensors) across long rollouts.
         self.log_infos = deque(maxlen=1)
 
+    def _base_isaac_env(self):
+        env = getattr(self, "_env", None)
+        return getattr(env, "unwrapped", env)
+
+    def sample_expert_batch(self, batch_size: int, required_keys):
+        return self._base_isaac_env().sample_expert_batch(
+            batch_size=batch_size,
+            required_keys=required_keys,
+        )
+
+    def set_agent_latent_command(self, latent_command, env_ids=None):
+        return self._base_isaac_env().set_agent_latent_command(
+            latent_command,
+            env_ids=env_ids,
+        )
+
+    def reset_agent_latent_command(self, env_ids=None):
+        return self._base_isaac_env().reset_agent_latent_command(env_ids=env_ids)
+
+    def get_agent_latent_command(self, env_ids=None):
+        return self._base_isaac_env().get_agent_latent_command(env_ids=env_ids)
+
     @property
     def _is_batched(self) -> bool:
         return True

@@ -26,6 +26,7 @@ from .events import (
     reset_root_and_joints_to_reference_with_randomization,
 )
 from .observations import (
+    agent_latent_command,
     reference_motion_command,
     reference_anchor_pos_b,
     reference_anchor_ori_b,
@@ -68,6 +69,7 @@ __all__ = [
     "randomize_joint_default_pos",
     "reset_joints_to_reference",
     "reset_root_and_joints_to_reference_with_randomization",
+    "agent_latent_command",
     "reference_motion_command",
     "reference_anchor_pos_b",
     "reference_anchor_ori_b",

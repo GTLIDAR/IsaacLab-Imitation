@@ -77,12 +77,12 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.gail.amp_reward_scale = 1.0
 
         self.ase.latent_dim = 16
-        self.ase.latent_key = "ase_latent"
+        self.ase.latent_key = ("policy", "latent_command")
         self.ase.latent_steps_min = 30
         self.ase.latent_steps_max = 120
         self.ase.latent_vmf_kappa = 1.0
 
-        self.ase.mi_reward_coeff = 0.25
+        self.ase.mi_reward_weight = 0.25
         self.ase.mi_loss_coeff = 1.0
         self.ase.mi_encoder_hidden_dims = [256, 256]
         self.ase.mi_encoder_activation = "elu"
@@ -90,9 +90,13 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.ase.mi_grad_clip_norm = 1.0
         self.ase.mi_weight_decay_coeff = 1.0e-5
         self.ase.mi_grad_penalty_coeff = 0.05
+        self.ase.mi_critic_hidden_dims = [256, 256]
+        self.ase.mi_critic_activation = "elu"
+        self.ase.mi_critic_lr = 3.0e-4
+        self.ase.mi_critic_grad_clip_norm = 1.0
 
         self.ase.diversity_bonus_coeff = 0.05
-        self.ase.diversity_reward_scale = 1.0
+        self.ase.diversity_target = 1.0
         self.ase.latent_uniformity_coeff = 0.005
         self.ase.latent_uniformity_temperature = 2.0
 

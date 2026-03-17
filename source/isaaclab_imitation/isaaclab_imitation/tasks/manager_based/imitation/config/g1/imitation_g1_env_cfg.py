@@ -141,8 +141,9 @@ def _compose_obs_keys(group_name: str, term_names: list[str]) -> list[ObsKey]:
 
 
 G1_POLICY_OBS_TERM_NAMES: list[str] = [
-    "reference_motion",
-    "reference_anchor_ori_b",
+    # "reference_motion",
+    "latent_command",
+    # "reference_anchor_ori_b",
     "base_ang_vel",
     "joint_pos_rel",
     "joint_vel_rel",
@@ -152,6 +153,7 @@ G1_POLICY_OBS_KEYS: list[ObsKey] = _compose_obs_keys("policy", G1_POLICY_OBS_TER
 
 G1_VALUE_OBS_TERM_NAMES: list[str] = [
     "reference_motion",
+    # "latent_command",
     "reference_anchor_pos_b",
     "reference_anchor_ori_b",
     "body_pos",
@@ -393,6 +395,7 @@ class G1ObservationCfg:
                 )
             },
         )
+        latent_command = ObsTerm(func=mdp.agent_latent_command)
         reference_anchor_ori_b = ObsTerm(
             func=mdp.reference_anchor_ori_b,
             params={
@@ -429,6 +432,7 @@ class G1ObservationCfg:
                 )
             },
         )
+        latent_command = ObsTerm(func=mdp.agent_latent_command)
         reference_anchor_pos_b = ObsTerm(
             func=mdp.reference_anchor_pos_b,
             params={
@@ -739,6 +743,7 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
     replay_reference: bool = False
     replay_only: bool = False
     reference_start_frame: int = 0
+    latent_command_dim: int = 16
 
     _debug_rewards: bool = False
 

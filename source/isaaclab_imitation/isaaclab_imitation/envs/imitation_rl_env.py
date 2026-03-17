@@ -236,6 +236,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self.current_reference: TensorDict = self.trajectory_manager.sample(
             advance=False
         )
+        self._agent_latent_dim = int(getattr(cfg, "latent_command_dim", 16))
+        self._agent_latent_command = torch.zeros(
+            (num_envs, self._agent_latent_dim),
+            device=device,
+            dtype=torch.float32,
+        )
 
         # Store reference joint mapping
         self.reference_joint_names = reference_joint_names
@@ -298,6 +304,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         super().__init__(cfg, render_mode, **kwargs)
 
         self.robot: Articulation = self.scene["robot"]
+        self._expert_env_origins = self.scene.env_origins.clone()
+        self._expert_default_joint_pos = self.robot.data.default_joint_pos.clone()
+        self._expert_default_joint_vel = self.robot.data.default_joint_vel.clone()
         self._setup_reconstructed_reference_action_cache()
         self._finalize_reference_body_names()
         self._initialize_mdp_fast_paths()
@@ -1218,6 +1227,48 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             self._mdp_reference_motion_cache[cache_key] = motion_command
         return motion_command
 
+    def get_agent_latent_command(
+        self, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Return the current agent-published latent command buffer."""
+        if env_ids is None:
+            return self._agent_latent_command
+        env_ids = env_ids.to(device=self.device, dtype=torch.long)
+        return self._agent_latent_command.index_select(0, env_ids)
+
+    def set_agent_latent_command(
+        self, latent_command: torch.Tensor, env_ids: torch.Tensor | None = None
+    ) -> None:
+        """Publish the latest agent latent command into the env observation state."""
+        latent_command = latent_command.to(device=self.device, dtype=torch.float32)
+        if env_ids is None:
+            if latent_command.ndim != 2 or latent_command.shape != self._agent_latent_command.shape:
+                raise ValueError(
+                    "Latent command shape mismatch. "
+                    f"Expected {tuple(self._agent_latent_command.shape)}, got {tuple(latent_command.shape)}."
+                )
+            self._agent_latent_command.copy_(latent_command)
+            return
+
+        env_ids = env_ids.to(device=self.device, dtype=torch.long)
+        if latent_command.ndim != 2 or latent_command.shape != (
+            env_ids.shape[0],
+            self._agent_latent_dim,
+        ):
+            raise ValueError(
+                "Latent command shape mismatch for indexed update. "
+                f"Expected {(env_ids.shape[0], self._agent_latent_dim)}, got {tuple(latent_command.shape)}."
+            )
+        self._agent_latent_command.index_copy_(0, env_ids, latent_command)
+
+    def reset_agent_latent_command(self, env_ids: torch.Tensor | None = None) -> None:
+        """Reset latent commands for the selected environments to zeros."""
+        if env_ids is None:
+            self._agent_latent_command.zero_()
+            return
+        env_ids = env_ids.to(device=self.device, dtype=torch.long)
+        self._agent_latent_command.index_fill_(0, env_ids, 0.0)
+
     def _resolve_reference_body_visualization_pairs(
         self,
     ) -> tuple[torch.Tensor, torch.Tensor, list[str]] | None:
@@ -1415,6 +1466,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         # Reset trajectory tracking (reassigns trajectories and resets steps)
         self.trajectory_manager.reset_envs(env_ids.clone())
+        self.reset_agent_latent_command(env_ids)
 
         # Refresh only the resetting rows before reset events consume current_reference.
         self._refresh_current_reference(env_ids, advance=False)
@@ -1665,13 +1717,22 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 "Failed to transform reference quaternion for expert sampling."
             )
         root_quat_w = root_quat_w_opt
-        env_origins = self.scene.env_origins.index_select(0, env_ids)
+        scene = getattr(self, "scene", None)
+        if scene is None:
+            env_origins = self._expert_env_origins.index_select(0, env_ids)
+        else:
+            env_origins = scene.env_origins.index_select(0, env_ids)
         root_pos = root_pos_w - env_origins
         align_quat, _ = self._get_reference_alignment_transform(env_ids)
         root_lin_vel = math_utils.quat_apply(align_quat, root_lin_vel_ref)
         root_ang_vel = math_utils.quat_apply(align_quat, root_ang_vel_ref)
-        default_joint_pos = self.robot.data.default_joint_pos.index_select(0, env_ids)
-        default_joint_vel = self.robot.data.default_joint_vel.index_select(0, env_ids)
+        robot = getattr(self, "robot", None)
+        if robot is None:
+            default_joint_pos = self._expert_default_joint_pos.index_select(0, env_ids)
+            default_joint_vel = self._expert_default_joint_vel.index_select(0, env_ids)
+        else:
+            default_joint_pos = robot.data.default_joint_pos.index_select(0, env_ids)
+            default_joint_vel = robot.data.default_joint_vel.index_select(0, env_ids)
         batch_size = int(env_ids.shape[0])
         identity_rot6d = torch.zeros(
             (batch_size, 6),
@@ -1685,7 +1746,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             device=self.device,
             dtype=root_pos.dtype,
         )
-        current_action = getattr(self.action_manager, "action", None)
+        action_manager = getattr(self, "action_manager", None)
+        current_action = getattr(action_manager, "action", None)
         if isinstance(current_action, torch.Tensor):
             zero_last_action = torch.zeros_like(current_action.index_select(0, env_ids))
         else:
