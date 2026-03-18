@@ -83,7 +83,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_output_scale = 0.25
         self.ipmd.estimated_reward_clamp_min = -0.25
         self.ipmd.estimated_reward_clamp_max = 0.25
-        self.ipmd.task_reward_weight = 0.3
+        self.ipmd.est_reward_weight = 0.3
         self.collector.no_cuda_sync = True
         self.log_level = "critical"
         self.ipmd.reward_l2_coeff = 0.5
