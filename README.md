@@ -1,8 +1,8 @@
 # IsaacLab-Imitation
 
 IsaacLab-Imitation is a multi-repo workspace for humanoid imitation learning on top of Isaac Lab. This repository
-contains the Isaac Lab extension code for the imitation environments, while the workspace also vendors the
-`IsaacLab`, `RLOpt`, and `ImitationLearningTools` repositories as git submodules.
+contains the Isaac Lab extension code for the imitation environments, while the workspace also vendors or assumes local
+checkouts of the upstream `IsaacLab`, `RLOpt`, and `ImitationLearningTools` repositories (typically as git submodules).
 
 The current focus is manager-based imitation environments for the Unitree G1 robot, with training flows built around
 RLOpt and RSL-RL.
@@ -25,7 +25,7 @@ Registered task IDs currently include:
 
 ## Workspace setup
 
-Clone with submodules:
+Clone with submodules (recommended layout, with `IsaacLab` etc. as submodules inside this repo):
 
 ```bash
 git clone --recurse-submodules git@github.com:GTLIDAR/IsaacLab-Imitation.git
@@ -39,7 +39,26 @@ git submodule sync --recursive
 git submodule update --init --recursive
 ```
 
-This workspace also expects `unitree_rl_lab` as a sibling checkout for training and cluster workflows:
+This workspace also expects the upstream `IsaacLab`, `unitree_rl_lab`, and `loco-mujoco` repositories to be available
+either as submodules in this repo (under directories such as `IsaacLab/`) or as sibling checkouts next to it.
+
+When using sibling checkouts, a typical layout looks like:
+
+```text
+/path/to/workspace-root/
+  IsaacLab-Imitation/
+  IsaacLab/
+  unitree_rl_lab/
+  loco-mujoco/
+```
+
+In that case, make sure your Python tooling and environment configuration (for example, `PYTHONPATH` or editable
+installs) can see all of these repositories.
+
+If you are following the submodule-based layout, `IsaacLab` and the other vendored repos will live directly under
+`IsaacLab-Imitation/` instead.
+
+This workspace also expects `unitree_rl_lab` specifically as a sibling checkout for training and cluster workflows:
 
 ```bash
 cd ..

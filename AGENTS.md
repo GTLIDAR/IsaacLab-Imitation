@@ -7,6 +7,7 @@ This file defines how coding agents should work in the `IsaacLabImitation` works
 - This guidance is for the top-level `IsaacLabImitation` repo only.
 - Do not add or maintain agent guidance inside vendored submodules.
 - Treat `IsaacLab/`, `RLOpt/`, and `ImitationLearningTools/` as dependencies unless a task explicitly requires changes there.
+- The workspace also expects the upstream `IsaacLab`, `unitree_rl_lab`, and `loco-mujoco` repositories to be available either as git submodules in this repo or as sibling checkouts next to it.
 - Prefer edits in files owned by this repo, especially:
   - `source/isaaclab_imitation/`
   - `scripts/`
@@ -93,5 +94,5 @@ Use heavier training or playback commands only when the task requires them.
 ## When Updating Docs
 
 - Keep `README.md` and command examples consistent with actual scripts in this repo.
-- Prefer absolute clarity about required sibling checkouts such as `unitree_rl_lab`.
+- Prefer absolute clarity about required sibling or submodule checkouts such as `IsaacLab`, `unitree_rl_lab`, and `loco-mujoco`, and document the expected directory layout explicitly.
 - When mentioning execution commands, show them from the repository root.

@@ -25,39 +25,11 @@ from isaaclab_imitation.tasks.manager_based.imitation.imitation_env_cfg import (
     ImitationLearningEnvCfg,
 )
 
-try:
-    from unitree_rl_lab.assets.robots.unitree import (
-        UNITREE_G1_29DOF_MIMIC_ACTION_SCALE,
-        UNITREE_G1_29DOF_MIMIC_CFG,
-    )
-except ImportError:
-    _this_file = Path(__file__).resolve()
-    _unitree_source = None
-    for _parent in _this_file.parents:
-        _candidates = (
-            _parent / "unitree_rl_lab" / "source" / "unitree_rl_lab",
-            _parent / "unitree_rl_lab" / "source",
-        )
-        for _candidate in _candidates:
-            if _candidate.is_dir():
-                _unitree_source = _candidate
-                break
-        if _unitree_source is not None:
-            break
-    if _unitree_source is not None:
-        _unitree_source_str = str(_unitree_source)
-        if _unitree_source_str not in sys.path:
-            sys.path.append(_unitree_source_str)
-    try:
-        from unitree_rl_lab.assets.robots.unitree import (
-            UNITREE_G1_29DOF_MIMIC_ACTION_SCALE,
-            UNITREE_G1_29DOF_MIMIC_CFG,
-        )
-    except ImportError as err:
-        raise ImportError(
-            "Failed to import Unitree 29-DoF mimic robot config from unitree_rl_lab. "
-            "Install unitree_rl_lab or add it to PYTHONPATH to use Isaac-Imitation-G1-v0."
-        ) from err
+# Import g1 29DOF from unitree_rl_lab
+from unitree_rl_lab.assets.robots.unitree import (
+    UNITREE_G1_29DOF_MIMIC_ACTION_SCALE,
+    UNITREE_G1_29DOF_MIMIC_CFG,
+)
 
 
 VELOCITY_RANGE = {
@@ -141,9 +113,7 @@ def _compose_obs_keys(group_name: str, term_names: list[str]) -> list[ObsKey]:
 
 
 G1_POLICY_OBS_TERM_NAMES: list[str] = [
-    # "reference_motion",
     "latent_command",
-    # "reference_anchor_ori_b",
     "base_ang_vel",
     "joint_pos_rel",
     "joint_vel_rel",
@@ -153,9 +123,7 @@ G1_POLICY_OBS_KEYS: list[ObsKey] = _compose_obs_keys("policy", G1_POLICY_OBS_TER
 
 G1_VALUE_OBS_TERM_NAMES: list[str] = [
     "reference_motion",
-    # "latent_command",
-    "reference_anchor_pos_b",
-    "reference_anchor_ori_b",
+    "latent_command",
     "body_pos",
     "body_ori",
     "base_lin_vel",
@@ -386,24 +354,7 @@ class G1ObservationCfg:
     class PolicyCfg(ObsGroup):
         """Policy observations."""
 
-        reference_motion = ObsTerm(
-            func=mdp.reference_motion_command,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=G1_29DOF_JOINT_NAMES,
-                )
-            },
-        )
         latent_command = ObsTerm(func=mdp.agent_latent_command)
-        reference_anchor_ori_b = ObsTerm(
-            func=mdp.reference_anchor_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-        )
         base_ang_vel = ObsTerm(
             func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2)
         )
@@ -423,30 +374,8 @@ class G1ObservationCfg:
     class CriticCfg(ObsGroup):
         """Privileged critic observations."""
 
-        reference_motion = ObsTerm(
-            func=mdp.reference_motion_command,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=G1_29DOF_JOINT_NAMES,
-                )
-            },
-        )
         latent_command = ObsTerm(func=mdp.agent_latent_command)
-        reference_anchor_pos_b = ObsTerm(
-            func=mdp.reference_anchor_pos_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
-        )
-        reference_anchor_ori_b = ObsTerm(
-            func=mdp.reference_anchor_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
-        )
+
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
             params={
@@ -477,37 +406,6 @@ class G1ObservationCfg:
 
         def __post_init__(self):
             self.concatenate_terms = False
-
-    @configclass
-    class RewardCfg(ObsGroup):
-        """Privileged critic observations."""
-
-        body_pos = ObsTerm(
-            func=mdp.robot_body_pos_b,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    body_names=G1_TRACKED_BODY_NAMES,
-                    preserve_order=True,
-                ),
-                "anchor_body_name": "torso_link",
-            },
-        )
-        body_ori = ObsTerm(
-            func=mdp.robot_body_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    body_names=G1_TRACKED_BODY_NAMES,
-                    preserve_order=True,
-                ),
-                "anchor_body_name": "torso_link",
-            },
-        )
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
 
     @configclass
     class IPMDRewardCfg(ObsGroup):

@@ -1,3 +1,30 @@
 [build-system]
 requires = ["setuptools", "wheel", "toml"]
 build-backend = "setuptools.build_meta"
+
+# expects the IsaacLab, unitree_rl_lab, and loco-mujoco projects to be in the parent directory
+[tool.pyrefly]
+search-path = [
+    "isaaclab_imitation",
+    "../../../IsaacLab/source/isaaclab",
+    "../../../IsaacLab/source/isaaclab_tasks",
+    "../../../IsaacLab/source/isaaclab_assets",
+    "../../../IsaacLab/source/isaaclab_mimic",
+    "../../../IsaacLab/source/isaaclab_rl",
+    "../../../IsaacLab/source/isaaclab_tasks",
+    "../../../IsaacLab/source/isaaclab_assets",
+    "../../../IsaacLab/source/isaaclab_mimic",
+    "../../../IsaacLab/source/isaaclab_rl",
+    "../../../unitree_rl_lab/source/unitree_rl_lab",
+    "../../../loco-mujoco/loco_mujoco",
+    # if the user prefers the submodule version of IsaacLab, they can use the following paths
+    "../../IsaacLab/source/isaaclab",
+    "../../IsaacLab/source/isaaclab_tasks",
+    "../../IsaacLab/source/isaaclab_assets",
+    "../../IsaacLab/source/isaaclab_mimic",
+    "../../IsaacLab/source/isaaclab_rl",
+    "../../IsaacLab/source/isaaclab_tasks",
+    "../../IsaacLab/source/isaaclab_assets",
+    "../../IsaacLab/source/isaaclab_mimic",
+    "../../IsaacLab/source/isaaclab_rl",
+]
