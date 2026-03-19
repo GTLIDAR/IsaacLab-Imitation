@@ -122,7 +122,6 @@ G1_POLICY_OBS_TERM_NAMES: list[str] = [
 G1_POLICY_OBS_KEYS: list[ObsKey] = _compose_obs_keys("policy", G1_POLICY_OBS_TERM_NAMES)
 
 G1_VALUE_OBS_TERM_NAMES: list[str] = [
-    "reference_motion",
     "latent_command",
     "body_pos",
     "body_ori",
@@ -397,11 +396,12 @@ class G1ObservationCfg:
                 ),
                 "anchor_body_name": "torso_link",
             },
+            history_length=3,
         )
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel)
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel)
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, history_length=3)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, history_length=3)
+        joint_pos = ObsTerm(func=mdp.joint_pos_rel, history_length=3)
+        joint_vel = ObsTerm(func=mdp.joint_vel_rel, history_length=3)
         actions = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):

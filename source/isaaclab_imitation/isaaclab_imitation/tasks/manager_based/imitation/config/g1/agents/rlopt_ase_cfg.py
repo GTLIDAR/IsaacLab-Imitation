@@ -69,9 +69,7 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.gail.discriminator_replay_keep_prob = 0.25
 
         self.gail.use_gail_reward = True
-        self.gail.gail_reward_coeff = 1.0
-        self.gail.normalize_discriminator_reward = True
-        self.gail.proportion_env_reward = 0.1
+        self.gail.normalize_discriminator_reward = False
 
         self.gail.amp_reward_clip = True
         self.gail.amp_reward_scale = 1.0
@@ -80,31 +78,26 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.ase.latent_key = ("policy", "latent_command")
         self.ase.latent_steps_min = 30
         self.ase.latent_steps_max = 120
-        self.ase.latent_vmf_kappa = 1.0
-
-        self.ase.mi_reward_weight = 0.25
-        self.ase.mi_loss_coeff = 1.0
-        self.ase.mi_encoder_hidden_dims = [256, 256]
-        self.ase.mi_encoder_activation = "elu"
-        self.ase.mi_encoder_lr = 3.0e-4
-        self.ase.mi_grad_clip_norm = 1.0
-        self.ase.mi_weight_decay_coeff = 1.0e-5
-        self.ase.mi_grad_penalty_coeff = 0.05
+        self.ase.task_reward_w = 0.0
+        self.ase.discriminator_reward_w = 1.0
+        self.ase.mi_reward_w = 0.25
+        self.ase.mi_enc_weight_decay = 1.0e-5
+        self.ase.mi_enc_grad_penalty = 0.05
+        self.ase.conditional_discriminator = True
         self.ase.mi_critic_hidden_dims = [256, 256]
         self.ase.mi_critic_activation = "elu"
         self.ase.mi_critic_lr = 3.0e-4
         self.ase.mi_critic_grad_clip_norm = 1.0
+        self.ase.discriminator_critic_hidden_dims = [256, 256]
+        self.ase.discriminator_critic_activation = "elu"
+        self.ase.discriminator_critic_lr = 3.0e-4
+        self.ase.discriminator_critic_grad_clip_norm = 1.0
 
-        self.ase.diversity_bonus_coeff = 0.05
-        self.ase.diversity_target = 1.0
-        self.ase.latent_uniformity_coeff = 0.005
-        self.ase.latent_uniformity_temperature = 2.0
+        self.ase.diversity_bonus = 0.05
+        self.ase.diversity_tar = 1.0
+        self.ase.latent_uniformity_weight = 0.005
+        self.ase.uniformity_kernel_scale = 2.0
 
-        self.gail.reward_mix_alpha_start = 0.9
-        self.gail.reward_mix_alpha_end = 1.0
-        self.gail.reward_mix_anneal_updates = 5000
-        self.gail.reward_mix_gate_after_updates = 250
-        self.gail.reward_mix_gate_estimated_std_min = 0.03
-        self.gail.reward_mix_alpha_when_unstable = 0.2
-        self.gail.reward_mix_gate_abs_gap_max = 0.75
-        self.gail.reward_mix_alpha_when_gap_large = 0.25
+        self.collector.no_cuda_sync = True
+        self.trainer.log_interval = 1_000_000
+        self.trainer.progress_bar = False

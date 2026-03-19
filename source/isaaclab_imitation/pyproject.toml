@@ -28,3 +28,4 @@ search-path = [
     "../../IsaacLab/source/isaaclab_mimic",
     "../../IsaacLab/source/isaaclab_rl",
 ]
+disable-type-errors-in-ide = true
