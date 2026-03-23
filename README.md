@@ -172,6 +172,56 @@ python scripts/prepare_lafan1_from_csv.py \
     --recursive
 ```
 
+That batch path now uses the repo-local converters in this repo. By default, NPZ generation runs through a single
+batched Isaac Sim session via `scripts/batch_csv_to_npz.py`. If you request `--record_videos`, the same batched
+session also spawns one camera per environment and writes one MP4 per motion.
+
+If you also want one MP4 replay video per converted motion under your data directory, add `--record_videos` and point
+`--video_dir` at a folder under `data/`:
+
+```bash
+python scripts/prepare_lafan1_from_csv.py \
+    --csv_dir /absolute/path/to/csv_motions \
+    --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
+    --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
+    --video_dir /absolute/path/to/data/lafan1/videos/g1 \
+    --video_width 640 --video_height 480 \
+    --record_videos \
+    --recursive --headless
+```
+
+To download the public Hugging Face LAFAN1 retargeted dataset into this repo's `./data` folder, use:
+
+```bash
+conda run -n SkillLearning python scripts/setup_lafan1_dataset.py
+```
+
+That command defaults to the Unitree G1 subset and writes the raw CSV files under:
+
+```text
+data/lafan1/raw/g1/
+```
+
+If you want one command that downloads the G1 CSV set and then converts it into NPZ files plus a manifest for this
+repo's loader, use:
+
+```bash
+conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
+    --prepare-npz --headless
+```
+
+By default that writes:
+
+```text
+data/lafan1/raw/g1/
+data/lafan1/npz/g1/
+data/lafan1/manifests/g1_lafan1_manifest.json
+```
+
+The Hugging Face dataset stores the retargeted G1 motions at 30 FPS, so the wrapper script passes `--input_fps 30`
+into the conversion step automatically. Use `--robot_type h1`, `--robot_type h1_2`, or `--robot_type all` if you
+need other subsets from the same dataset repo.
+
 ## Playback and smoke tests
 
 Run a zero-action smoke test:
