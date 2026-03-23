@@ -98,45 +98,45 @@ G1_EE_BODY_NAMES: list[str] = [
     "right_wrist_yaw_link",
 ]
 
-G1_UNDESIRED_CONTACT_PATTERN = (
-    r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)"
-    r"(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$"
-)
 
-# Observation keys used by rlopt configs.
-ObsKey: TypeAlias = str | tuple[str, ...]
-
-
-def _compose_obs_keys(group_name: str, term_names: list[str]) -> list[ObsKey]:
+def _compose_obs_keys(
+    group_name: str, term_names: list[str]
+) -> list[str | tuple[str, ...]]:
     """Compose nested observation keys from group and term names."""
     return [(group_name, term_name) for term_name in term_names]
 
 
-G1_POLICY_OBS_TERM_NAMES: list[str] = [
-    "latent_command",
-    "base_ang_vel",
-    "joint_pos_rel",
-    "joint_vel_rel",
-    "last_action",
-]
-G1_POLICY_OBS_KEYS: list[ObsKey] = _compose_obs_keys("policy", G1_POLICY_OBS_TERM_NAMES)
+G1_POLICY_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
+    "policy",
+    [
+        "latent_command",
+        "base_lin_vel",
+        "base_ang_vel",
+        "joint_pos_rel",
+        "joint_vel_rel",
+        "last_action",
+    ],
+)
 
-G1_VALUE_OBS_TERM_NAMES: list[str] = [
-    "latent_command",
-    "body_pos",
-    "body_ori",
-    "base_lin_vel",
-    "base_ang_vel",
-    "joint_pos",
-    "joint_vel",
-    "actions",
-]
-G1_VALUE_OBS_KEYS: list[ObsKey] = _compose_obs_keys("critic", G1_VALUE_OBS_TERM_NAMES)
 
-# GAIL/AMP/ASE discriminator inputs use the same key-based kinematic subset as
-# IPMD reward estimation so expert batches can be streamed from trajectory manager.
-G1_REWARD_OBS_KEYS: list[ObsKey] = _compose_obs_keys(
-    "ipmd_rwd",
+G1_VALUE_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
+    "critic",
+    [
+        "latent_command",
+        "body_pos",
+        "body_ori",
+        "base_lin_vel",
+        "base_ang_vel",
+        "joint_pos_rel",
+        "joint_vel_rel",
+        "joint_pos",
+        "joint_vel",
+        "last_action",
+    ],
+)
+
+G1_REWARD_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
+    "reference",
     [
         "joint_pos",
         "joint_vel",
@@ -145,18 +145,6 @@ G1_REWARD_OBS_KEYS: list[ObsKey] = _compose_obs_keys(
         "root_lin_vel",
         "root_ang_vel",
     ],
-)
-
-G1_IPMD_REWARD_OBS_TERM_NAMES: list[str] = [
-    "joint_pos",
-    "joint_vel",
-    "root_pos",
-    "root_quat",
-    "root_lin_vel",
-    "root_ang_vel",
-]
-G1_IPMD_REWARD_OBS_KEYS: list[ObsKey] = _compose_obs_keys(
-    "ipmd_rwd", G1_IPMD_REWARD_OBS_TERM_NAMES
 )
 
 
@@ -354,15 +342,16 @@ class G1ObservationCfg:
         """Policy observations."""
 
         latent_command = ObsTerm(func=mdp.agent_latent_command)
+        base_lin_vel = ObsTerm(
+            func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1)
+        )
         base_ang_vel = ObsTerm(
             func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2)
         )
         joint_pos_rel = ObsTerm(
-            func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01)
+            func=mdp.joint_pos, noise=Unoise(n_min=-0.01, n_max=0.01)
         )
-        joint_vel_rel = ObsTerm(
-            func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5)
-        )
+        joint_vel_rel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-0.5, n_max=0.5))
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -400,16 +389,18 @@ class G1ObservationCfg:
         )
         base_lin_vel = ObsTerm(func=mdp.base_lin_vel, history_length=3)
         base_ang_vel = ObsTerm(func=mdp.base_ang_vel, history_length=3)
-        joint_pos = ObsTerm(func=mdp.joint_pos_rel, history_length=3)
-        joint_vel = ObsTerm(func=mdp.joint_vel_rel, history_length=3)
-        actions = ObsTerm(func=mdp.last_action)
+        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, history_length=3)
+        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, history_length=3)
+        joint_pos = ObsTerm(func=mdp.joint_pos, history_length=3)
+        joint_vel = ObsTerm(func=mdp.joint_vel, history_length=3)
+        last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
             self.concatenate_terms = False
 
     @configclass
-    class IPMDRewardCfg(ObsGroup):
-        """IPMD reward-estimation kinematic observations."""
+    class ReferenceCfg(ObsGroup):
+        """Reference kinematic observations."""
 
         joint_pos = ObsTerm(func=mdp.joint_pos)
         joint_vel = ObsTerm(func=mdp.joint_vel)
@@ -423,7 +414,7 @@ class G1ObservationCfg:
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    ipmd_rwd: IPMDRewardCfg = IPMDRewardCfg()
+    reference: ReferenceCfg = ReferenceCfg()
 
 
 @configclass
@@ -483,12 +474,12 @@ class G1EventCfg:
         },
     )
 
-    push_robot = EventTerm(
-        func=mdp.push_by_setting_velocity,
-        mode="interval",
-        interval_range_s=(1.0, 3.0),
-        params={"velocity_range": VELOCITY_RANGE},
-    )
+    # push_robot = EventTerm(
+    #     func=mdp.push_by_setting_velocity,
+    #     mode="interval",
+    #     interval_range_s=(1.0, 3.0),
+    #     params={"velocity_range": VELOCITY_RANGE},
+    # )
 
 
 @configclass
@@ -585,7 +576,12 @@ class G1RewardsCfg:
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
-                body_names=[G1_UNDESIRED_CONTACT_PATTERN],
+                body_names=[
+                    (
+                        r"^(?!left_ankle_roll_link$)(?!right_ankle_roll_link$)"
+                        r"(?!left_wrist_yaw_link$)(?!right_wrist_yaw_link$).+$"
+                    )
+                ],
             ),
             "threshold": 1.0,
         },
@@ -641,7 +637,7 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
     replay_reference: bool = False
     replay_only: bool = False
     reference_start_frame: int = 0
-    latent_command_dim: int = 16
+    latent_command_dim: int = 64
 
     _debug_rewards: bool = False
 

@@ -2,7 +2,7 @@ from isaaclab.utils import configclass
 
 from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
-    G1_IPMD_REWARD_OBS_KEYS,
+    G1_REWARD_OBS_KEYS,
     G1_POLICY_OBS_KEYS,
     G1_VALUE_OBS_KEYS,
 )
@@ -22,7 +22,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
 
         self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
         self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
-        self.ipmd.reward_input_keys = list(G1_IPMD_REWARD_OBS_KEYS)
+        self.ipmd.reward_input_keys = list(G1_REWARD_OBS_KEYS)
 
         # More initial exploration to improve policy-state coverage for inverse reward.
         self.collector.init_random_frames = 0
@@ -70,6 +70,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.mi_weight_decay_coeff = 1.0e-5
         self.ipmd.mi_grad_penalty_coeff = 0.05
         self.ipmd.latent_input_type = "s"
+        self.ipmd.env_reward_weight = 1.0
 
         # MI reward: ASE-aligned hypersphere shift → reward ∈ [0, 1].
         # Weight is applied at advantage level (mi_adv * mi_reward_weight added to
@@ -89,12 +90,13 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.latent_uniformity_coeff = 0.005
         self.ipmd.latent_uniformity_temperature = 2.0
 
-        self.ipmd.reward_input_type = "s'"
+        self.ipmd.reward_input_type = "s"
         self.ipmd.use_estimated_rewards_for_ppo = True
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
         self.ipmd.bc_coef = 0.0
         self.compile.compile = False
-        self.trainer.progress_bar = True
+        self.trainer.progress_bar = False
+        self.trainer.log_interval = 1_000_000
         self.ipmd.reward_output_scale = 0.25
         self.ipmd.estimated_reward_clamp_min = -0.25
         self.ipmd.estimated_reward_clamp_max = 0.25
