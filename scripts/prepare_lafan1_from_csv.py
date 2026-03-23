@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -405,7 +406,7 @@ def main() -> None:
 
         entry: dict[str, object] = {
             "name": motion_name,
-            "path": str(npz_file),
+            "path": os.path.relpath(npz_file, manifest_path.parent),
             # Source is NPZ generated at output_fps.
             "input_fps": float(args.output_fps),
         }
@@ -430,6 +431,7 @@ def main() -> None:
             "assume_npz_exists": bool(args.assume_npz_exists),
             "record_videos": bool(args.record_videos),
             "video_dir": str(video_dir) if args.record_videos else None,
+            "paths_are_relative_to_manifest": True,
         },
     }
 
@@ -445,8 +447,6 @@ def main() -> None:
         "\n"
         "# Paste into ImitationG1LafanTrackEnvCfg\n"
         f'lafan1_manifest_path = "{manifest_path}"\n'
-        "lafan1_refresh_zarr_dataset = True\n"
-        'lafan1_reset_schedule = "random"\n'
     )
     print(cfg_snippet)
 

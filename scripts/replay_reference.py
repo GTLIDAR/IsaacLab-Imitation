@@ -84,6 +84,24 @@ parser.add_argument(
     help="Maximum replay steps when not recording video.",
 )
 parser.add_argument(
+    "--keep_terminations",
+    action="store_true",
+    default=False,
+    help=(
+        "Keep env termination terms enabled during replay-only runs. "
+        "By default replay_reference disables them so the clip is not interrupted by RL resets."
+    ),
+)
+parser.add_argument(
+    "--keep_rewards",
+    action="store_true",
+    default=False,
+    help=(
+        "Keep env reward terms enabled during replay-only runs. "
+        "By default replay_reference disables them because playback does not need RL rewards."
+    ),
+)
+parser.add_argument(
     "--motion_path",
     type=str,
     default=None,
@@ -272,7 +290,7 @@ from typing import Any, Dict
 
 import isaaclab_tasks  # noqa: F401
 import isaaclab_imitation  # noqa: F401
-from isaaclab.utils.math import quat_apply, quat_apply_inverse, quat_error_magnitude, quat_mul
+from isaaclab.utils.math import quat_apply, quat_apply_inverse, quat_error_magnitude
 from isaaclab.utils.dict import print_dict
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
@@ -463,7 +481,9 @@ def _quat_apply_inverse_batched(quat: torch.Tensor, vec: torch.Tensor) -> torch.
     return quat_apply_inverse(quat_expanded, vec_flat).reshape(n_envs, n_items, 3)
 
 
-def _resolve_reference_to_asset_body_map(env) -> tuple[torch.Tensor, torch.Tensor, list[tuple[str, str]]]:
+def _resolve_reference_to_asset_body_map(
+    env,
+) -> tuple[torch.Tensor, torch.Tensor, list[tuple[str, str]]]:
     """Resolve reference body indices to asset body indices using conservative name matching."""
     reference_names = list(getattr(env.unwrapped, "reference_body_names", []) or [])
     asset_names = list(getattr(env.unwrapped.robot.data, "body_names", []) or [])
@@ -518,26 +538,32 @@ def _resolve_reference_to_asset_body_map(env) -> tuple[torch.Tensor, torch.Tenso
     )
 
 
-def _compute_replay_reference_match_errors(env, reference: TensorDictBase) -> dict[str, torch.Tensor]:
+def _compute_replay_reference_match_errors(
+    env, reference: TensorDictBase
+) -> dict[str, torch.Tensor]:
     """Compute replay-vs-reference errors for root pose and joint positions."""
     unwrapped = env.unwrapped
     robot = unwrapped.robot
 
-    init_pos = unwrapped._init_root_pos
-    init_quat = unwrapped._init_root_quat
-
     # Expected root state follows the same transform path used in ImitationRLEnv._replay_reference.
-    expected_root_pos = quat_apply(init_quat, reference["root_pos"])
-    expected_root_pos[:, :2] += init_pos[:, :2]
-    expected_root_pos[:, 2] = init_pos[:, 2]
-    expected_root_quat = quat_mul(init_quat, reference["root_quat"])
+    expected_root_pos, expected_root_quat = (
+        unwrapped._transform_reference_pose_to_world(
+            reference["root_pos"], reference["root_quat"]
+        )
+    )
+    if expected_root_quat is None:
+        raise RuntimeError(
+            "Failed to transform reference root quaternion for replay debug."
+        )
 
     actual_root_state = robot.data.root_state_w
     actual_root_pos = actual_root_state[:, :3]
     actual_root_quat = actual_root_state[:, 3:7]
 
     root_pos_err = torch.linalg.norm(actual_root_pos - expected_root_pos, dim=-1)
-    root_pos_xy_err = torch.linalg.norm(actual_root_pos[:, :2] - expected_root_pos[:, :2], dim=-1)
+    root_pos_xy_err = torch.linalg.norm(
+        actual_root_pos[:, :2] - expected_root_pos[:, :2], dim=-1
+    )
     root_pos_z_err = torch.abs(actual_root_pos[:, 2] - expected_root_pos[:, 2])
     root_quat_err_rad = quat_error_magnitude(actual_root_quat, expected_root_quat)
     root_quat_err_deg = torch.rad2deg(root_quat_err_rad)
@@ -557,40 +583,40 @@ def _compute_replay_reference_match_errors(env, reference: TensorDictBase) -> di
     xpos_abs_err = torch.empty(0, device=unwrapped.device)
     xpos_rel_err = torch.empty(0, device=unwrapped.device)
     xpos_num_bodies = torch.tensor(0, device=unwrapped.device, dtype=torch.int64)
-    if ("xpos" in reference.keys()) and hasattr(unwrapped, "trajectory_manager"):
+    reference_body_pos = reference.get("body_pos_w")
+    reference_body_quat = reference.get("body_quat_w")
+    if reference_body_pos is None:
+        reference_body_pos = reference.get("xpos")
+    if reference_body_quat is None:
+        reference_body_quat = reference.get("xquat")
+    if reference_body_pos is not None and hasattr(unwrapped, "trajectory_manager"):
         ref_body_ids, asset_body_ids, _ = _resolve_reference_to_asset_body_map(env)
         if ref_body_ids.numel() > 0:
-            tm = unwrapped.trajectory_manager
-            traj_ranks = tm.env_traj_rank.to(dtype=torch.int64)
-            start_idx = tm._start[traj_ranks]
-            start_td = tm.rb[start_idx]
-            start_td = start_td.to(unwrapped.device)
-            start_qpos = start_td.get("qpos")
-            start_root_pos = start_qpos[:, 0:3]
-            start_root_quat = start_qpos[:, 3:7]
-
-            ref_xpos = reference["xpos"][:, ref_body_ids, :]
-            ref_xpos_rel_start = _quat_apply_inverse_batched(
-                start_root_quat, ref_xpos - start_root_pos.unsqueeze(1)
+            ref_xpos = reference_body_pos[:, ref_body_ids, :]
+            ref_xquat = (
+                reference_body_quat[:, ref_body_ids, :]
+                if reference_body_quat is not None
+                else None
             )
-            expected_xpos_w = _quat_apply_batched(unwrapped._init_root_quat, ref_xpos_rel_start)
-            expected_xpos_w = expected_xpos_w + unwrapped._init_root_pos.unsqueeze(1)
-
-            # Match the root z clamping behavior used in replay.
-            rigid_root_unclamped = quat_apply(unwrapped._init_root_quat, reference["root_pos"])
-            rigid_root_unclamped = rigid_root_unclamped + unwrapped._init_root_pos
-            z_shift = rigid_root_unclamped[:, 2] - unwrapped._init_root_pos[:, 2]
-            expected_xpos_w[:, :, 2] -= z_shift.unsqueeze(1)
+            expected_xpos_w, _ = (
+                unwrapped._transform_reference_body_pose_to_init_alignment(
+                    ref_xpos, ref_xquat
+                )
+            )
 
             actual_xpos_w = robot.data.body_link_pos_w[:, asset_body_ids, :]
-            xpos_abs_err_per_body = torch.linalg.norm(actual_xpos_w - expected_xpos_w, dim=-1)
+            xpos_abs_err_per_body = torch.linalg.norm(
+                actual_xpos_w - expected_xpos_w, dim=-1
+            )
             xpos_abs_err = torch.mean(xpos_abs_err_per_body, dim=-1)
 
             actual_rel = actual_xpos_w - actual_xpos_w[:, :1, :]
             expected_rel = expected_xpos_w - expected_xpos_w[:, :1, :]
             xpos_rel_err_per_body = torch.linalg.norm(actual_rel - expected_rel, dim=-1)
             xpos_rel_err = torch.mean(xpos_rel_err_per_body, dim=-1)
-            xpos_num_bodies = torch.tensor(ref_body_ids.numel(), device=unwrapped.device, dtype=torch.int64)
+            xpos_num_bodies = torch.tensor(
+                ref_body_ids.numel(), device=unwrapped.device, dtype=torch.int64
+            )
 
     return {
         "root_pos_err": root_pos_err,
@@ -675,9 +701,7 @@ def _print_replay_reference_match_debug(
                 dataset, motion, trajectory = tm.get_env_traj_info(env_id)
                 rank = int(tm.env_traj_rank[env_id].item())
                 local_step = int(tm.env_step[env_id].item())
-                traj_msg = (
-                    f" traj={dataset}/{motion}/{trajectory} rank={rank} local_step={local_step}"
-                )
+                traj_msg = f" traj={dataset}/{motion}/{trajectory} rank={rank} local_step={local_step}"
             print(
                 "[DEBUG][reference_match][env] "
                 f"env={env_id} "
@@ -696,8 +720,12 @@ def _print_replay_reference_match_debug(
         "root_quat_err_deg_max": root_quat_err_deg.max().item(),
         "joint_linf_err_max": joint_linf_err.max().item(),
         "joint_l2_err_max": joint_l2_err.max().item(),
-        "xpos_abs_err_max": xpos_abs_err.max().item() if xpos_abs_err.numel() > 0 else 0.0,
-        "xpos_rel_err_max": xpos_rel_err.max().item() if xpos_rel_err.numel() > 0 else 0.0,
+        "xpos_abs_err_max": xpos_abs_err.max().item()
+        if xpos_abs_err.numel() > 0
+        else 0.0,
+        "xpos_rel_err_max": xpos_rel_err.max().item()
+        if xpos_rel_err.numel() > 0
+        else 0.0,
         "xpos_abs_err_mean": xpos_abs_err_mean,
         "xpos_rel_err_mean": xpos_rel_err_mean,
         "xpos_available": float(xpos_abs_err.numel() > 0),
@@ -832,7 +860,9 @@ class ReplayExportTester:
         return ReplayExportTester.inspect_torchrl_rb_buffer(rb, sample_size)
 
     @staticmethod
-    def inspect_lerobot_dataset(lerobot_dir: str, sample_index: int = 0) -> Dict[str, Any]:
+    def inspect_lerobot_dataset(
+        lerobot_dir: str, sample_index: int = 0
+    ) -> Dict[str, Any]:
         if LeRobotDataset is None:
             raise ImportError("lerobot is required to inspect the dataset.")
         dataset = LeRobotDataset(repo_id="local", root=lerobot_dir)
@@ -847,25 +877,15 @@ class ReplayExportTester:
         }
 
 
-def _read_motion_fps(motion_path: Path) -> float | None:
-    if motion_path.suffix.lower() != ".npz" or not motion_path.is_file():
-        return None
-    try:
-        with np.load(motion_path) as npz_data:
-            if "fps" not in npz_data.files:
-                return None
-            return float(np.asarray(npz_data["fps"]).reshape(-1)[0])
-    except Exception:
-        return None
-
-
 def _split_csv_list(value: str | None) -> list[str]:
     if value is None:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _normalize_motion_entries(entries_like: Any, default_input_fps: float) -> list[dict[str, Any]]:
+def _normalize_motion_entries(
+    entries_like: Any, default_input_fps: float, base_dir: Path | None = None
+) -> list[dict[str, Any]]:
     """Normalize CLI manifest/json into iltools lafan1_csv source entries."""
 
     def _as_list(value: Any) -> list[Any]:
@@ -875,9 +895,15 @@ def _normalize_motion_entries(entries_like: Any, default_input_fps: float) -> li
             return value
         return [value]
 
-    def _normalize_one(entry_like: Any, fallback_name: str | None = None) -> dict[str, Any]:
+    def _normalize_one(
+        entry_like: Any, fallback_name: str | None = None
+    ) -> dict[str, Any]:
         if isinstance(entry_like, str):
-            path_obj = Path(entry_like).expanduser().resolve()
+            path_obj = Path(entry_like).expanduser()
+            if not path_obj.is_absolute() and base_dir is not None:
+                path_obj = (base_dir / path_obj).resolve()
+            else:
+                path_obj = path_obj.resolve()
             return {
                 "name": fallback_name or path_obj.stem,
                 "path": str(path_obj),
@@ -889,7 +915,11 @@ def _normalize_motion_entries(entries_like: Any, default_input_fps: float) -> li
         path_value = entry_like.get("path") or entry_like.get("file")
         if path_value is None:
             raise ValueError("Each motion entry must include `path` (or `file`).")
-        path_obj = Path(str(path_value)).expanduser().resolve()
+        path_obj = Path(str(path_value)).expanduser()
+        if not path_obj.is_absolute() and base_dir is not None:
+            path_obj = (base_dir / path_obj).resolve()
+        else:
+            path_obj = path_obj.resolve()
         entry_name = str(entry_like.get("name") or fallback_name or path_obj.stem)
         normalized = {
             "name": entry_name,
@@ -902,14 +932,22 @@ def _normalize_motion_entries(entries_like: Any, default_input_fps: float) -> li
 
     if isinstance(entries_like, dict):
         if "motions" in entries_like:
-            return _normalize_motion_entries(entries_like["motions"], default_input_fps)
+            return _normalize_motion_entries(
+                entries_like["motions"], default_input_fps, base_dir=base_dir
+            )
         if "lafan1_csv" in entries_like:
-            return _normalize_motion_entries(entries_like["lafan1_csv"], default_input_fps)
+            return _normalize_motion_entries(
+                entries_like["lafan1_csv"], default_input_fps, base_dir=base_dir
+            )
         dataset_cfg = entries_like.get("dataset")
         if isinstance(dataset_cfg, dict):
             trajectories_cfg = dataset_cfg.get("trajectories")
             if isinstance(trajectories_cfg, dict) and "lafan1_csv" in trajectories_cfg:
-                return _normalize_motion_entries(trajectories_cfg["lafan1_csv"], default_input_fps)
+                return _normalize_motion_entries(
+                    trajectories_cfg["lafan1_csv"],
+                    default_input_fps,
+                    base_dir=base_dir,
+                )
         if "path" in entries_like or "file" in entries_like:
             return [_normalize_one(entries_like)]
 
@@ -917,8 +955,12 @@ def _normalize_motion_entries(entries_like: Any, default_input_fps: float) -> li
         normalized_entries: list[dict[str, Any]] = []
         for motion_name, path_spec in entries_like.items():
             for index, path_item in enumerate(_as_list(path_spec)):
-                fallback_name = str(motion_name) if index == 0 else f"{motion_name}_{index}"
-                normalized_entries.append(_normalize_one(path_item, fallback_name=fallback_name))
+                fallback_name = (
+                    str(motion_name) if index == 0 else f"{motion_name}_{index}"
+                )
+                normalized_entries.append(
+                    _normalize_one(path_item, fallback_name=fallback_name)
+                )
         return normalized_entries
 
     normalized_entries: list[dict[str, Any]] = []
@@ -933,14 +975,24 @@ def _load_cli_motion_entries() -> list[dict[str, Any]]:
     if args_cli.motion_manifest is not None:
         manifest_path = Path(args_cli.motion_manifest).expanduser().resolve()
         if not manifest_path.is_file():
-            raise FileNotFoundError(f"--motion_manifest does not exist: {manifest_path}")
+            raise FileNotFoundError(
+                f"--motion_manifest does not exist: {manifest_path}"
+            )
         with manifest_path.open("r", encoding="utf-8") as file:
             manifest_data = json.load(file)
-        entries.extend(_normalize_motion_entries(manifest_data, args_cli.motion_input_fps))
+        entries.extend(
+            _normalize_motion_entries(
+                manifest_data,
+                args_cli.motion_input_fps,
+                base_dir=manifest_path.parent,
+            )
+        )
 
     if args_cli.motion_sources_json is not None:
         inline_data = json.loads(args_cli.motion_sources_json)
-        entries.extend(_normalize_motion_entries(inline_data, args_cli.motion_input_fps))
+        entries.extend(
+            _normalize_motion_entries(inline_data, args_cli.motion_input_fps)
+        )
 
     if args_cli.motion_path is not None:
         motion_path = Path(args_cli.motion_path).expanduser().resolve()
@@ -955,22 +1007,6 @@ def _load_cli_motion_entries() -> list[dict[str, Any]]:
         )
 
     return entries
-
-
-def _infer_common_motion_fps(entries: list[dict[str, Any]]) -> float | None:
-    fps_values: list[float] = []
-    for entry in entries:
-        motion_path = Path(entry["path"]).expanduser().resolve()
-        fps = _read_motion_fps(motion_path)
-        if fps is None or fps <= 0.0:
-            return None
-        fps_values.append(float(fps))
-    if len(fps_values) == 0:
-        return None
-    first = fps_values[0]
-    if all(abs(value - first) < 1.0e-6 for value in fps_values):
-        return first
-    return None
 
 
 def _dataset_path_for_entries(entries: list[dict[str, Any]]) -> str:
@@ -1002,18 +1038,18 @@ def _apply_motion_source_override(env_cfg) -> None:
         loader_kwargs["dataset_name"] = loader_kwargs.get("dataset_name", "lafan1")
         loader_kwargs["sim"] = {"dt": float(env_cfg.sim.dt)}
         loader_kwargs["decimation"] = int(env_cfg.decimation)
-        reference_joint_names = list(getattr(env_cfg, "reference_joint_names", []) or [])
+        reference_joint_names = list(
+            getattr(env_cfg, "reference_joint_names", []) or []
+        )
         if len(reference_joint_names) > 0:
             loader_kwargs["joint_names"] = reference_joint_names
 
         if args_cli.motion_control_freq is not None:
             loader_kwargs["control_freq"] = float(args_cli.motion_control_freq)
-        else:
-            common_fps = _infer_common_motion_fps(entries)
-            if common_fps is not None:
-                loader_kwargs["control_freq"] = float(common_fps)
-            else:
-                loader_kwargs["control_freq"] = 1.0 / (float(env_cfg.sim.dt) * float(env_cfg.decimation))
+        elif "control_freq" not in loader_kwargs:
+            loader_kwargs["control_freq"] = 1.0 / (
+                float(env_cfg.sim.dt) * float(env_cfg.decimation)
+            )
 
         env_cfg.loader_type = "lafan1_csv"
         env_cfg.loader_kwargs = loader_kwargs
@@ -1061,6 +1097,48 @@ def _apply_motion_source_override(env_cfg) -> None:
         )
 
 
+def _disable_termination_terms(env_cfg) -> None:
+    """Disable all configured termination terms for uninterrupted replay-only runs."""
+    terminations_cfg = getattr(env_cfg, "terminations", None)
+    if terminations_cfg is None:
+        return
+
+    disabled_terms: list[str] = []
+    for name in getattr(terminations_cfg, "__dataclass_fields__", {}):
+        if getattr(terminations_cfg, name, None) is None:
+            continue
+        setattr(terminations_cfg, name, None)
+        disabled_terms.append(name)
+
+    if hasattr(env_cfg, "episode_length_s"):
+        env_cfg.episode_length_s = 1.0e9
+
+    if len(disabled_terms) > 0:
+        print(
+            "[INFO] Disabled replay termination terms: "
+            + ", ".join(sorted(disabled_terms))
+        )
+
+
+def _disable_reward_terms(env_cfg) -> None:
+    """Disable all configured reward terms for replay-only runs."""
+    rewards_cfg = getattr(env_cfg, "rewards", None)
+    if rewards_cfg is None:
+        return
+
+    disabled_terms: list[str] = []
+    for name in getattr(rewards_cfg, "__dataclass_fields__", {}):
+        if getattr(rewards_cfg, name, None) is None:
+            continue
+        setattr(rewards_cfg, name, None)
+        disabled_terms.append(name)
+
+    if len(disabled_terms) > 0:
+        print(
+            "[INFO] Disabled replay reward terms: " + ", ".join(sorted(disabled_terms))
+        )
+
+
 @hydra_task_config(args_cli.task, args_cli.agent)
 def main(env_cfg, agent_cfg):  # noqa: ARG001
     """Replay reference data."""
@@ -1077,6 +1155,14 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
     # force reference replay
     env_cfg.replay_reference = True
     env_cfg.replay_only = True
+    if args_cli.keep_terminations:
+        print("[INFO] Keeping replay termination terms enabled.")
+    else:
+        _disable_termination_terms(env_cfg)
+    if args_cli.keep_rewards:
+        print("[INFO] Keeping replay reward terms enabled.")
+    else:
+        _disable_reward_terms(env_cfg)
 
     task_name = args_cli.task.split(":")[-1]
     log_root_path = os.path.abspath(os.path.join("logs", "reference_replay", task_name))
@@ -1153,7 +1239,9 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
     debug_xpos_abs_time_sum = 0.0
     debug_xpos_rel_time_sum = 0.0
     if args_cli.debug_reference_match:
-        ref_body_ids_dbg, asset_body_ids_dbg, name_pairs_dbg = _resolve_reference_to_asset_body_map(env)
+        ref_body_ids_dbg, asset_body_ids_dbg, name_pairs_dbg = (
+            _resolve_reference_to_asset_body_map(env)
+        )
         print(
             "[INFO] Replay-reference debug checks enabled:"
             f" interval={debug_interval},"
@@ -1174,7 +1262,9 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
             preview = ", ".join([f"{r}->{a}" for r, a in name_pairs_dbg[:8]])
             print(f"[INFO] Replay-reference xpos mapping preview: {preview}")
         else:
-            print("[WARN] Replay-reference xpos mapping found no overlapping bodies; xpos errors disabled.")
+            print(
+                "[WARN] Replay-reference xpos mapping found no overlapping bodies; xpos errors disabled."
+            )
 
     lerobot_exporter = None
     lerobot_dir = args_cli.lerobot_dir
@@ -1207,7 +1297,7 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
         next_obs, reward, terminated, truncated, extras = env.step(action)
         next_reference = env.unwrapped.get_reference_data()
         if args_cli.debug_reference_match and (timestep % debug_interval == 0):
-            errors = _compute_replay_reference_match_errors(env, next_reference)
+            errors = _compute_replay_reference_match_errors(env, reference)
             debug_report = _print_replay_reference_match_debug(
                 env,
                 timestep,
@@ -1239,7 +1329,9 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
             transition = TensorDict({}, batch_size=[num_envs])
             for key, val in flat_obs.items():
                 transition.set(key, val)
-            transition.set("reference", _as_tensordict(_to_cpu(reference), batch_size=[num_envs]))
+            transition.set(
+                "reference", _as_tensordict(_to_cpu(reference), batch_size=[num_envs])
+            )
             transition.set("action", _to_cpu(action))
             transition.set("reward", _to_cpu(reward))
             transition.set("terminated", _to_cpu(terminated))
@@ -1247,7 +1339,10 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
             transition.set("done", _to_cpu(done))
             for key, val in flat_next_obs.items():
                 transition.set(("next", key), val)
-            transition.set(("next", "reference"), _as_tensordict(_to_cpu(next_reference), batch_size=[num_envs]))
+            transition.set(
+                ("next", "reference"),
+                _as_tensordict(_to_cpu(next_reference), batch_size=[num_envs]),
+            )
             transition.set(("next", "reward"), _to_cpu(reward))
             transition.set(("next", "done"), _to_cpu(done))
 
@@ -1298,19 +1393,21 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
             xpos_abs_time_avg = debug_xpos_abs_time_sum / float(debug_xpos_eval_steps)
             xpos_rel_time_avg = debug_xpos_rel_time_sum / float(debug_xpos_eval_steps)
         print("[INFO] Replay-reference debug summary:")
-        print(json.dumps(
-            {
-                **debug_agg_max,
-                "fail_steps": debug_fail_steps,
-                "debug_eval_steps": debug_eval_steps,
-                "xpos_eval_steps": debug_xpos_eval_steps,
-                "xpos_abs_err_time_avg": xpos_abs_time_avg,
-                "xpos_rel_err_time_avg": xpos_rel_time_avg,
-                "evaluated_steps": timestep,
-            },
-            indent=2,
-            sort_keys=True,
-        ))
+        print(
+            json.dumps(
+                {
+                    **debug_agg_max,
+                    "fail_steps": debug_fail_steps,
+                    "debug_eval_steps": debug_eval_steps,
+                    "xpos_eval_steps": debug_xpos_eval_steps,
+                    "xpos_abs_err_time_avg": xpos_abs_time_avg,
+                    "xpos_rel_err_time_avg": xpos_rel_time_avg,
+                    "evaluated_steps": timestep,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
 
     if rb is not None and rb_dir is not None:
         if hasattr(rb, "dump"):

@@ -1,0 +1,24 @@
+{
+  "dataset_name": "lafan1",
+  "dataset": {
+    "trajectories": {
+      "lafan1_csv": [
+        {
+          "name": "replace_me_motion_1",
+          "path": "../../../../data/lafan1/npz/g1/replace_me_motion_1.npz",
+          "input_fps": 50.0
+        },
+        {
+          "name": "replace_me_motion_2",
+          "path": "../../../../data/lafan1/npz/g1/replace_me_motion_2.npz",
+          "input_fps": 50.0
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "description": "Template manifest. Copy this file to data/lafan1/manifests/g1_lafan1_manifest.json and replace the entries with your local NPZ motions.",
+    "template_only": true,
+    "paths_are_relative_to_manifest": true
+  }
+}

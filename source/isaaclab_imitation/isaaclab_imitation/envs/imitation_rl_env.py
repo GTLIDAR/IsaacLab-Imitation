@@ -213,7 +213,10 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._reconstructed_reference_action_mode = str(
             getattr(cfg, "reconstructed_reference_action_mode", "next_pose")
         )
-        if self._reconstructed_reference_action_enabled and not self._reference_has_aligned_next:
+        if (
+            self._reconstructed_reference_action_enabled
+            and not self._reference_has_aligned_next
+        ):
             raise ValueError(
                 "reconstructed_reference_action=True requires transition-aligned next_* reference data. "
                 "Rebuild the cached dataset with `refresh_zarr_dataset=True`."
@@ -276,12 +279,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._expert_sampler_warned_action_fallback = False
         self._expert_sampler_warned_unknown_terms: set[str] = set()
         self._reconstructed_reference_action_term: JointPositionAction | None = None
-        self._reconstructed_reference_target_to_action_index: (
-            torch.Tensor | None
-        ) = None
-        self._reconstructed_reference_action_pd_ratio_target: (
-            torch.Tensor | None
-        ) = None
+        self._reconstructed_reference_target_to_action_index: torch.Tensor | None = None
+        self._reconstructed_reference_action_pd_ratio_target: torch.Tensor | None = None
 
         # Store initial poses for replay
         self._init_root_pos = torch.zeros((num_envs, 3), device=device)
@@ -395,8 +394,14 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if mode == "pd_compensated":
             if kp_target is None or kd_target is None:
                 raise ValueError("pd_compensated reconstruction requires Kp and Kd.")
-            safe_kp = torch.where(kp_target.abs() > 1.0e-8, kp_target, torch.ones_like(kp_target))
-            ratio = torch.where(kp_target.abs() > 1.0e-8, kd_target / safe_kp, torch.zeros_like(kd_target))
+            safe_kp = torch.where(
+                kp_target.abs() > 1.0e-8, kp_target, torch.ones_like(kp_target)
+            )
+            ratio = torch.where(
+                kp_target.abs() > 1.0e-8,
+                kd_target / safe_kp,
+                torch.zeros_like(kd_target),
+            )
         elif mode != "next_pose":
             raise ValueError(
                 "Unsupported reconstructed_reference_action_mode: "
@@ -452,7 +457,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             return
 
         target_joint_names = list(self.trajectory_manager.target_joint_names)
-        target_name_to_index = {name: idx for idx, name in enumerate(target_joint_names)}
+        target_name_to_index = {
+            name: idx for idx, name in enumerate(target_joint_names)
+        }
         action_joint_names = list(action_term._joint_names)
         missing_joint_names = [
             name for name in action_joint_names if name not in target_name_to_index
@@ -463,7 +470,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 f"{missing_joint_names}"
             )
 
-        target_joint_ids, _ = self.robot.find_joints(target_joint_names, preserve_order=True)
+        target_joint_ids, _ = self.robot.find_joints(
+            target_joint_names, preserve_order=True
+        )
         kp_target = None
         kd_target = None
         if self._reconstructed_reference_action_mode == "pd_compensated":
@@ -527,7 +536,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if action_term is None:
             action_term = self._reconstructed_reference_action_term
         if action_term is None:
-            raise ValueError("JointPositionAction term is unavailable for action processing.")
+            raise ValueError(
+                "JointPositionAction term is unavailable for action processing."
+            )
 
         raw_action = raw_action.to(device=self.device, dtype=torch.float32)
         env_ids = env_ids.to(device=self.device, dtype=torch.int64)
@@ -558,7 +569,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if action_term is None:
             action_term = self._reconstructed_reference_action_term
         if action_term is None:
-            raise ValueError("JointPositionAction term is unavailable for action processing.")
+            raise ValueError(
+                "JointPositionAction term is unavailable for action processing."
+            )
 
         processed_action = processed_action.to(device=self.device, dtype=torch.float32)
         env_ids = env_ids.to(device=self.device, dtype=torch.int64)
@@ -603,9 +616,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             ).index_select(0, action_index)
             processed_reference_action = (
                 processed_reference_action
-                + joint_vel.to(device=self.device, dtype=processed_reference_action.dtype).index_select(
-                    -1, action_index
-                )
+                + joint_vel.to(
+                    device=self.device, dtype=processed_reference_action.dtype
+                ).index_select(-1, action_index)
                 * pd_ratio
             )
 
@@ -649,7 +662,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         policy_action = policy_action.detach().to(dtype=torch.float32)
         reference_action = reference_action.detach().to(dtype=torch.float32)
-        reference_nan_frac = float((~torch.isfinite(reference_action)).float().mean().item())
+        reference_nan_frac = float(
+            (~torch.isfinite(reference_action)).float().mean().item()
+        )
 
         policy_action = torch.nan_to_num(policy_action, nan=0.0, posinf=0.0, neginf=0.0)
         reference_action = torch.nan_to_num(
@@ -693,7 +708,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             return {}
         reference_raw_action, reference_processed_action = reconstructed
 
-        policy_raw_action = policy_raw_action.to(device=self.device, dtype=torch.float32)
+        policy_raw_action = policy_raw_action.to(
+            device=self.device, dtype=torch.float32
+        )
         if policy_raw_action.shape != reference_raw_action.shape:
             return {}
 
@@ -735,7 +752,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         actual_state = actual_state.detach().to(dtype=torch.float32)
         reference_state = reference_state.detach().to(dtype=torch.float32)
-        reference_nan_frac = float((~torch.isfinite(reference_state)).float().mean().item())
+        reference_nan_frac = float(
+            (~torch.isfinite(reference_state)).float().mean().item()
+        )
 
         actual_state = torch.nan_to_num(actual_state, nan=0.0, posinf=0.0, neginf=0.0)
         reference_state = torch.nan_to_num(
@@ -790,7 +809,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if self._reconstructed_reference_target_to_action_index is None:
             return None
 
-        cached_targets = self.trajectory_manager.get_reconstructed_action_targets(global_indices)
+        cached_targets = self.trajectory_manager.get_reconstructed_action_targets(
+            global_indices
+        )
         if cached_targets is None:
             return None
 
@@ -805,7 +826,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 device=self.device, dtype=q_cmd.dtype
             )
             q_cmd = torch.clamp(q_cmd, min=clip[..., 0], max=clip[..., 1])
-        return self._processed_to_raw_action(q_cmd, env_ids=env_ids, action_term=action_term)
+        return self._processed_to_raw_action(
+            q_cmd, env_ids=env_ids, action_term=action_term
+        )
 
     def _finalize_reference_body_names(self) -> None:
         """Improve reference body-name mapping for datasets that only provide generic names."""
@@ -853,7 +876,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             tuple[str, ...], tuple[torch.Tensor, torch.Tensor]
         ] = {}
         self._mdp_robot_anchor_id_cache: dict[str, int] = {}
-        self._mdp_robot_anchor_state_cache: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._mdp_robot_anchor_state_cache: dict[
+            int, tuple[torch.Tensor, torch.Tensor]
+        ] = {}
         self._mdp_robot_body_pose_w_cache: dict[
             object, tuple[torch.Tensor, torch.Tensor]
         ] = {}
@@ -1164,7 +1189,10 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             return body_velocity
         body_ids_t = self._get_body_ids_tensor_fast(body_ids)
         if isinstance(body_ids_t, slice):
-            body_velocity = (self.robot.data.body_ang_vel_w, self.robot.data.body_lin_vel_w)
+            body_velocity = (
+                self.robot.data.body_ang_vel_w,
+                self.robot.data.body_lin_vel_w,
+            )
         else:
             body_velocity = (
                 self.robot.data.body_ang_vel_w.index_select(1, body_ids_t),
@@ -1242,7 +1270,10 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         """Publish the latest agent latent command into the env observation state."""
         latent_command = latent_command.to(device=self.device, dtype=torch.float32)
         if env_ids is None:
-            if latent_command.ndim != 2 or latent_command.shape != self._agent_latent_command.shape:
+            if (
+                latent_command.ndim != 2
+                or latent_command.shape != self._agent_latent_command.shape
+            ):
                 raise ValueError(
                     "Latent command shape mismatch. "
                     f"Expected {tuple(self._agent_latent_command.shape)}, got {tuple(latent_command.shape)}."
@@ -1439,7 +1470,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             if isinstance(src_value, TensorDict) and isinstance(dst_value, TensorDict):
                 self._index_copy_reference_rows_(dst_value, src_value, env_ids)
                 continue
-            if isinstance(src_value, torch.Tensor) and isinstance(dst_value, torch.Tensor):
+            if isinstance(src_value, torch.Tensor) and isinstance(
+                dst_value, torch.Tensor
+            ):
                 dst_value.index_copy_(0, env_ids, src_value)
                 continue
             dst.set(key, src_value)
@@ -1691,7 +1724,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
     ) -> dict[str, torch.Tensor]:
         """Convert sampled reference data to observation-compatible tensors."""
         env_ids = env_ids.to(dtype=torch.int64, device=self.device)
-        key = (lambda name: name) if len(prefix) == 0 else (lambda name: (*prefix, name))
+        key = (
+            (lambda name: name) if len(prefix) == 0 else (lambda name: (*prefix, name))
+        )
         root_pos_ref = reference.get(key("root_pos"))
         root_quat_ref = reference.get(key("root_quat"))
         root_lin_vel_ref = reference.get(key("root_lin_vel"))
@@ -1881,8 +1916,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 next_env_ids = current_env_ids
                 next_prefix = ("next",)
             else:
-                next_reference, next_env_ids, _ = self._sample_reference_batch_for_expert(
-                    batch_size
+                next_reference, next_env_ids, _ = (
+                    self._sample_reference_batch_for_expert(batch_size)
                 )
                 next_prefix = ()
             mapped_next = self._reference_to_requested_obs(
