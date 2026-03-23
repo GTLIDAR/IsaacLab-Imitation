@@ -46,7 +46,7 @@ install_uv_with_conda() {
         log "Installing uv into conda environment: ${CONDA_PREFIX}"
     fi
 
-    conda install -y uv
+    conda install -y conda-forge::uv
     require_command uv
 }
 

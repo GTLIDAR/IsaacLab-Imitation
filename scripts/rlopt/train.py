@@ -82,7 +82,7 @@ parser.add_argument(
     dest="algorithm",
     type=str.upper,
     default="PPO",
-    choices=["PPO", "SAC", "IPMD", "GAIL", "AMP", "ASE"],
+    choices=["PPO", "SAC", "IPMD", "IPMD_SR", "IPMD_BILINEAR", "GAIL", "AMP", "ASE"],
     help="RLOpt algorithm to train (must match the agent config).",
 )
 parser.add_argument(
@@ -145,7 +145,7 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 from isaaclab_imitation.envs.rlopt import IsaacLabTerminalObsReader, IsaacLabWrapper
 from isaaclab_tasks.utils.hydra import hydra_task_config
-from rlopt.agent import AMP, ASE, GAIL, IPMD, PPO, SAC
+from rlopt.agent import AMP, ASE, GAIL, IPMD, IPMDBilinear, IPMDSR, PPO, SAC
 from rlopt.config_base import RLOptConfig, TrainerConfig
 from torchrl.envs import (
     Compose,
@@ -166,6 +166,8 @@ ALGORITHM_CLASS_MAP = {
     "PPO": PPO,
     "SAC": SAC,
     "IPMD": IPMD,
+    "IPMD_SR": IPMDSR,
+    "IPMD_BILINEAR": IPMDBilinear,
     "GAIL": GAIL,
     "AMP": AMP,
     "ASE": ASE,
