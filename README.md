@@ -155,14 +155,23 @@ See `data/README.md` for the expected local directory layout and the common loca
 
 ### Recommended full-dataset flow
 
-The simplest way to get the full local G1 dataset is the Hugging Face preparation wrapper:
+The simplest way to get the full local G1 dataset from the public Hugging Face dataset
+`lvhaidong/LAFAN1_Retargeting_Dataset` is the shell wrapper:
+
+```bash
+./scripts/download_g1_lafan1_data.sh
+```
+
+This downloads the G1 subset into `data/` and then runs the local NPZ + manifest preparation step.
+
+The underlying Python entrypoint is:
 
 ```bash
 conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
     --prepare-npz --headless
 ```
 
-This downloads the public retargeted LAFAN1 G1 CSV set, converts it to NPZ, and writes:
+Both commands download the public retargeted LAFAN1 G1 CSV set, convert it to NPZ, and write:
 
 ```text
 data/lafan1/raw/g1/

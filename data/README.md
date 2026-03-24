@@ -21,6 +21,12 @@ Common flows:
 1. Download the Hugging Face G1 dataset and prepare NPZ plus a full manifest:
 
 ```bash
+./scripts/download_g1_lafan1_data.sh
+```
+
+Equivalent lower-level Python command:
+
+```bash
 conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
     --prepare-npz --headless
 ```
