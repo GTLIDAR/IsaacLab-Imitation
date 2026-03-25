@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 
 import copy
+from collections.abc import Mapping
 from pathlib import Path
 
 from isaaclab.managers import EventTermCfg as EventTerm
@@ -18,8 +19,7 @@ from isaaclab.utils.noise import AdditiveUniformNoiseCfg as Unoise
 from ... import mdp
 from ...imitation_env_cfg import ImitationLearningEnvCfg
 from ...lafan1_manifest import (
-    DEFAULT_G1_DANCE102_MANIFEST_PATH,
-    DEFAULT_G1_LAFAN1_MANIFEST_PATH,
+    build_lafan1_loader_kwargs,
     dataset_path_from_entries,
     load_lafan1_manifest,
 )
@@ -121,7 +121,6 @@ G1_POLICY_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
 G1_VALUE_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
     "critic",
     [
-        "latent_command",
         "body_pos",
         "body_ori",
         "base_lin_vel",
@@ -181,7 +180,7 @@ class G1ObservationCfg:
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
-            self.enable_corruption = True
+            self.enable_corruption = False
             self.concatenate_terms = False
 
     @configclass
@@ -521,14 +520,53 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
         "joint_names": G1_29DOF_JOINT_NAMES,
     }
     reset_schedule: str = "random"
-    refresh_zarr_dataset: bool = True
+    refresh_zarr_dataset: bool = False
     require_npz_body_states: bool = True
-    lafan1_manifest_path: str = str(DEFAULT_G1_LAFAN1_MANIFEST_PATH)
+    lafan1_manifest_path: str | None = None
     motions: list[str] | None = None
     trajectories: list[str] | None = None
     wrap_steps: bool = False
     reconstructed_reference_action: bool = True
     reconstructed_reference_action_mode = "next_pose"
+
+    def _apply_optional_hydra_overrides(self, data: Mapping) -> dict:
+        """Apply optional top-level overrides before Isaac Lab's strict type updater.
+
+        Isaac Lab updates config objects by comparing the incoming value type against the
+        runtime type of the existing attribute. That rejects Hydra overrides such as
+        `None -> str` for optional public fields like `lafan1_manifest_path`.
+        """
+        remaining = dict(data)
+
+        if "lafan1_manifest_path" in remaining:
+            value = remaining.pop("lafan1_manifest_path")
+            self.lafan1_manifest_path = None if value is None else str(value)
+
+        if "dataset_path" in remaining:
+            value = remaining.pop("dataset_path")
+            self.dataset_path = None if value is None else str(value)
+
+        if "motions" in remaining:
+            value = remaining.pop("motions")
+            if value is None:
+                self.motions = None
+            elif isinstance(value, (list, tuple)):
+                self.motions = [str(item) for item in value]
+            else:
+                raise ValueError("motions must be a list of motion names or null.")
+
+        if "trajectories" in remaining:
+            value = remaining.pop("trajectories")
+            if value is None:
+                self.trajectories = None
+            elif isinstance(value, (list, tuple)):
+                self.trajectories = [str(item) for item in value]
+            else:
+                raise ValueError(
+                    "trajectories must be a list of trajectory names or null."
+                )
+
+        return remaining
 
     def _lafan_source_entries(self) -> list[dict[str, object]]:
         try:
@@ -558,37 +596,13 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
                 "Generate repo-local NPZ files before loading this manifest."
             )
 
-    def _apply_manifest(self) -> None:
-        _, manifest_entries = load_lafan1_manifest(self.lafan1_manifest_path)
-        dataset_cfg = copy.deepcopy(self.loader_kwargs.get("dataset", {}))
-        trajectories_cfg = copy.deepcopy(dataset_cfg.get("trajectories", {}))
-        trajectories_cfg["lafan1_csv"] = manifest_entries
-        dataset_cfg["trajectories"] = trajectories_cfg
-        self.loader_kwargs["dataset"] = dataset_cfg
-        self.loader_kwargs["dataset_name"] = "lafan1"
-        self.loader_kwargs["sim"] = {"dt": float(self.sim.dt)}
-        self.loader_kwargs["decimation"] = int(self.decimation)
-        self.loader_kwargs["joint_names"] = list(self.reference_joint_names)
-
-        if self.dataset_path is None:
-            self.dataset_path = dataset_path_from_entries(manifest_entries)
-        else:
-            self.dataset_path = str(Path(self.dataset_path).expanduser().resolve())
-
-        if self.motions is None:
-            self.motions = [str(entry["name"]) for entry in manifest_entries]
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-
-        self.loader_kwargs = copy.deepcopy(self.loader_kwargs)
+    def _normalize_sequence_overrides(self) -> None:
         if self.motions is not None:
             self.motions = list(self.motions)
         if self.trajectories is not None:
             self.trajectories = list(self.trajectories)
 
-        self._apply_manifest()
-
+    def _validate_reset_schedule(self) -> None:
         allowed_reset_schedules = {"random", "sequential", "round_robin"}
         self.reset_schedule = self.reset_schedule.strip().lower()
         if self.reset_schedule not in allowed_reset_schedules:
@@ -597,35 +611,77 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
                 f"Allowed values: {sorted(allowed_reset_schedules)}."
             )
 
-        source_entries = self._lafan_source_entries()
+    def _validate_lafan_source_entries(
+        self, source_entries: list[dict[str, object]]
+    ) -> None:
         for source in source_entries:
             source_path = Path(str(source["path"])).expanduser().resolve()
             source["path"] = str(source_path)
             self._validate_source_path(source_path)
 
+    def _resolve_manifest_config(
+        self,
+        *,
+        dataset_path_explicit: bool = False,
+        motions_explicit: bool = False,
+    ) -> None:
+        if self.lafan1_manifest_path is None:
+            return
 
-@configclass
-class ImitationG1Dance102CompareEnvCfg(ImitationG1LafanTrackEnvCfg):
-    """Single-motion comparison env using a repo-local dance_102 manifest."""
+        _, manifest_entries = load_lafan1_manifest(self.lafan1_manifest_path)
+        self.loader_type = "lafan1_csv"
+        self.loader_kwargs = build_lafan1_loader_kwargs(
+            entries=manifest_entries,
+            sim_dt=float(self.sim.dt),
+            decimation=int(self.decimation),
+            joint_names=list(self.reference_joint_names),
+        )
 
-    dataset_path: str | None = None
-    lafan1_manifest_path: str = str(DEFAULT_G1_DANCE102_MANIFEST_PATH)
-    motions: list[str] | None = ["dance_102"]
-    trajectories: list[str] | None = ["trajectory_0"]
-    reset_schedule: str = "sequential"
-    refresh_zarr_dataset: bool = True
+        if dataset_path_explicit and self.dataset_path is not None:
+            self.dataset_path = str(Path(self.dataset_path).expanduser().resolve())
+        else:
+            self.dataset_path = dataset_path_from_entries(manifest_entries)
+
+        if motions_explicit and self.motions is not None:
+            self.motions = list(self.motions)
+        else:
+            self.motions = [str(entry["name"]) for entry in manifest_entries]
+
+        self._validate_lafan_source_entries(
+            self.loader_kwargs["dataset"]["trajectories"]["lafan1_csv"]
+        )
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        source_path = Path(str(self._lafan_source_entries()[0]["path"]))
-        if not source_path.exists():
-            raise FileNotFoundError(
-                "dance_102 motion npz file is required for this comparison env. "
-                f"Expected repo-local file: {source_path}. "
-                "Either place the motion at that path or override `lafan1_manifest_path`."
-            )
+
+        self.loader_kwargs = copy.deepcopy(self.loader_kwargs)
+        self._normalize_sequence_overrides()
+        self._validate_reset_schedule()
+        self._resolve_manifest_config()
 
 
 # Backward-compatible aliases.
 ImitationG1EnvCfg = ImitationG1LafanTrackEnvCfg
-ImitationG1Dance102LafanEnvCfg = ImitationG1Dance102CompareEnvCfg
+
+
+def _g1_lafan_track_env_cfg_from_dict(
+    self: ImitationG1LafanTrackEnvCfg, data: dict
+) -> None:
+    dataset_path_explicit = isinstance(data, Mapping) and "dataset_path" in data
+    motions_explicit = isinstance(data, Mapping) and "motions" in data
+
+    if isinstance(data, Mapping):
+        data = self._apply_optional_hydra_overrides(data)
+
+    ImitationG1BaseTrackingEnvCfg.from_dict(self, data)
+
+    self.loader_kwargs = copy.deepcopy(self.loader_kwargs)
+    self._normalize_sequence_overrides()
+    self._validate_reset_schedule()
+    self._resolve_manifest_config(
+        dataset_path_explicit=dataset_path_explicit,
+        motions_explicit=motions_explicit,
+    )
+
+
+ImitationG1LafanTrackEnvCfg.from_dict = _g1_lafan_track_env_cfg_from_dict

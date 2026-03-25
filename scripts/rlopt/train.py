@@ -1,9 +1,4 @@
-# Feiyang Wu (feiyangwu@gatech.edu), based on sb3/trian.py
-
-"""Script to train RL agent with Stable Baselines3."""
-
-"""Launch Isaac Sim Simulator first."""
-
+# Feiyang Wu (feiyangwu@gatech.edu)
 import argparse
 import logging
 import os
@@ -59,7 +54,10 @@ parser.add_argument(
     "--seed", type=int, default=None, help="Seed used for the environment"
 )
 parser.add_argument(
-    "--log_interval", type=int, default=100_000, help="Log data every n timesteps."
+    "--log_interval",
+    type=int,
+    default=100_000_000,
+    help="Log data every n timesteps.",
 )
 parser.add_argument(
     "--checkpoint",
@@ -124,8 +122,6 @@ def cleanup_pbar(*args):
 
 # disable KeyboardInterrupt override
 signal.signal(signal.SIGINT, cleanup_pbar)
-
-"""Rest everything follows."""
 
 import random
 import time

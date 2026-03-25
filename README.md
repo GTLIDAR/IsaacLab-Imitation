@@ -19,9 +19,7 @@ RLOpt and RSL-RL.
 Registered task IDs currently include:
 
 - `Isaac-Imitation-G1-LafanTrack-v0`
-- `Isaac-Imitation-G1-Dance102-Compare-v0`
 - `Isaac-Imitation-G1-v0`
-- `Isaac-Imitation-G1-Dance102-v0`
 
 ## Workspace setup
 
@@ -95,31 +93,57 @@ If you need the manual submodule setup details or cluster notes, see [REPO_SETUP
 ## Running training
 
 Examples below assume you are running from the repository root.
+Activate the `SkillLearning` conda environment first:
+
+```bash
+conda activate SkillLearning
+```
 
 Train a G1 imitation policy with RLOpt IPMD:
 
 ```bash
-./IsaacLab/isaaclab.sh -p scripts/rlopt/train.py \
+python scripts/rlopt/train.py \
     --task Isaac-Imitation-G1-LafanTrack-v0 \
     --algo IPMD \
-    --headless
+    --headless \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
 Train with RLOpt PPO:
 
 ```bash
-./IsaacLab/isaaclab.sh -p scripts/rlopt/train.py \
+python scripts/rlopt/train.py \
     --task Isaac-Imitation-G1-LafanTrack-v0 \
     --algo PPO \
-    --headless
+    --headless \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
+```
+
+Train ASE with the full local LAFAN1 G1 manifest:
+
+```bash
+python scripts/rlopt/train.py \
+    --task Isaac-Imitation-G1-v0 \
+    --num_envs 4096 \
+    --algo ASE \
+    --headless \
+    --video \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
+```
+
+If you want to reuse an existing cached Zarr dataset instead of rebuilding it on startup, add:
+
+```bash
+env.refresh_zarr_dataset=False
 ```
 
 Train with RSL-RL:
 
 ```bash
-./IsaacLab/isaaclab.sh -p scripts/rsl_rl/train.py \
+python scripts/rsl_rl/train.py \
     --task Isaac-Imitation-G1-LafanTrack-v0 \
-    --headless
+    --headless \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
 Common flags:
@@ -138,8 +162,6 @@ Motion loading in this repo is manifest-driven and repo-local under `data/`.
 
 Tracked manifests:
 
-- `source/isaaclab_imitation/isaaclab_imitation/manifests/g1_default_manifest.json`: 3-motion debug manifest
-- `source/isaaclab_imitation/isaaclab_imitation/manifests/g1_dance102_manifest.json`: single-motion `dance_102` manifest
 - `source/isaaclab_imitation/isaaclab_imitation/manifests/g1_lafan1_manifest.template.json`: tracked template for a
   full local G1 LAFAN1 manifest
 
@@ -246,62 +268,34 @@ conda run -n SkillLearning python scripts/setup_g1_lafan1_npz_dataset.py \
     --mode upload --token "$HF_TOKEN"
 ```
 
-### Dance 102
-
-For the built-in `dance_102` comparison manifest, the expected repo-local output is:
-
-```text
-data/dance_102/G1_Take_102.bvh_60hz.npz
-```
-
-If you have the CSV already, convert it with:
-
-```bash
-python scripts/csv_to_npz.py \
-    -f /absolute/path/to/G1_Take_102.bvh_60hz.csv \
-    --input_fps 60 \
-    --output_name data/dance_102/G1_Take_102.bvh_60hz.npz
-```
-
 ## Playback and smoke tests
 
 Run a zero-action smoke test:
 
 ```bash
-./IsaacLab/isaaclab.sh -p scripts/zero_agent.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0
+python scripts/zero_agent.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
 Run a random-action smoke test:
 
 ```bash
-./IsaacLab/isaaclab.sh -p scripts/random_agent.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0
+python scripts/random_agent.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
 Play back an RLOpt checkpoint:
 
 ```bash
-./IsaacLab/isaaclab.sh -p scripts/rlopt/play.py \
+python scripts/rlopt/play.py \
     --task Isaac-Imitation-G1-LafanTrack-v0 \
-    --checkpoint /absolute/path/to/checkpoint.pt
+    --checkpoint /absolute/path/to/checkpoint.pt \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
 Replay all 40 local G1 LAFAN1 motions from the full manifest:
-
-```bash
-./IsaacLab/isaaclab.sh -p scripts/replay_reference.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
-    --motion_manifest data/lafan1/manifests/g1_lafan1_manifest.json \
-    --motion_refresh_dataset \
-    --reset_schedule round_robin \
-    --num_envs 40 \
-    --video \
-    --video_length 500 \
-    --headless
-```
-
-If you are already inside an Isaac Sim-enabled Python environment, the equivalent direct invocation is:
 
 ```bash
 python scripts/replay_reference.py \
@@ -318,9 +312,7 @@ python scripts/replay_reference.py \
 Notes:
 
 - use `data/lafan1/manifests/g1_lafan1_manifest.json` to load the full local 40-motion set
-- use `source/isaaclab_imitation/isaaclab_imitation/manifests/g1_default_manifest.json` only for the small 3-motion debug set
-- if your workspace uses a sibling checkout instead of a submodule for Isaac Lab, replace `./IsaacLab/isaaclab.sh` with
-  `../IsaacLab/isaaclab.sh`
+- the generic `Isaac-Imitation-G1-LafanTrack-v0` task now expects `env.lafan1_manifest_path=...`
 - `replay_reference.py` disables reward and termination terms by default, so long reference videos do not reset early
 - pass `--keep_terminations` or `--keep_rewards` if you explicitly want the old RL-style behavior during replay
 - `--num_envs 40` is the way to see all 40 loaded trajectories at once; using fewer environments still loads the manifest,

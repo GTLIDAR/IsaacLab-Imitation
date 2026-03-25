@@ -4,8 +4,6 @@ This directory is for local and generated motion assets. Most of it remains git-
 
 Tracked manifests and templates live under `source/isaaclab_imitation/isaaclab_imitation/manifests/`:
 
-- `g1_default_manifest.json`: tracked 3-motion debug manifest
-- `g1_dance102_manifest.json`: tracked single-motion `dance_102` manifest
 - `g1_lafan1_manifest.template.json`: tracked template for a full local G1 LAFAN1 manifest
 
 Expected local paths:
@@ -14,7 +12,6 @@ Expected local paths:
 - `data/lafan1/npz/g1/`: converted G1 NPZ motions
 - `data/lafan1/manifests/g1_lafan1_manifest.json`: full local manifest
 - `data/lafan1/manifests/g1_debug_manifest.json`: smaller local subset manifest
-- `data/dance_102/G1_Take_102.bvh_60hz.npz`: local `dance_102` NPZ
 
 Common flows:
 
@@ -48,3 +45,9 @@ cp source/isaaclab_imitation/isaaclab_imitation/manifests/g1_lafan1_manifest.tem
 ```
 
 After copying, replace the placeholder motion names and paths with your local NPZ files.
+
+For the generic `Isaac-Imitation-G1-LafanTrack-v0` task, pass your manifest explicitly with:
+
+```bash
+env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
+```

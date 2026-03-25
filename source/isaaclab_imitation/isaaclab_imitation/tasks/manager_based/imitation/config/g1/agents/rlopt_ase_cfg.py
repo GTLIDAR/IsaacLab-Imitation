@@ -83,7 +83,7 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.ase.mi_reward_w = 0.25
         self.ase.mi_enc_weight_decay = 1.0e-5
         self.ase.mi_enc_grad_penalty = 0.05
-        self.ase.conditional_discriminator = True
+        self.ase.conditional_discriminator = False
         self.ase.mi_critic_hidden_dims = [256, 256]
         self.ase.mi_critic_activation = "elu"
         self.ase.mi_critic_lr = 3.0e-4
@@ -100,4 +100,5 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
 
         self.collector.no_cuda_sync = True
         self.trainer.log_interval = 1_000_000
-        self.trainer.progress_bar = False
+        self.trainer.progress_bar = True
+        self.log_level = "warning"

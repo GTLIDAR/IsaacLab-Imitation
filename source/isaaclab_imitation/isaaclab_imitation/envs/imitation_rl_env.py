@@ -77,6 +77,18 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         reference_joint_names = ['left_hip_pitch_joint', ...]
     """
 
+    @staticmethod
+    def _lafan_source_entries_from_loader_kwargs(
+        loader_kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        try:
+            entries = loader_kwargs["dataset"]["trajectories"]["lafan1_csv"]
+        except Exception:
+            return []
+        if not isinstance(entries, list):
+            return []
+        return [entry for entry in entries if isinstance(entry, dict)]
+
     def __init__(self, cfg: Any, render_mode: str | None = None, **kwargs: Any) -> None:
         """Initialize the simplified ImitationRLEnv."""
         # Get device
@@ -88,6 +100,25 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         loader_type = getattr(cfg, "loader_type", None)
         loader_kwargs = getattr(cfg, "loader_kwargs", {})
         refresh_zarr_dataset = bool(getattr(cfg, "refresh_zarr_dataset", False))
+        if loader_type in ("lafan1_csv", "lafan1"):
+            lafan_source_entries = self._lafan_source_entries_from_loader_kwargs(
+                loader_kwargs
+            )
+            manifest_path = getattr(cfg, "lafan1_manifest_path", None)
+            has_manifest_loader = (
+                manifest_path is not None and len(lafan_source_entries) > 0
+            )
+            has_explicit_loader_setup = (
+                dataset_path is not None and len(lafan_source_entries) > 0
+            )
+            if not has_manifest_loader and not has_explicit_loader_setup:
+                raise ValueError(
+                    "G1 LAFAN tracking tasks now require "
+                    "`env.lafan1_manifest_path=/path/to/manifest.json` for normal use. "
+                    "If you are configuring the env programmatically, provide explicit "
+                    "`loader_kwargs.dataset.trajectories.lafan1_csv` entries and "
+                    "`dataset_path` before env creation."
+                )
 
         # Build or load the replay buffer and trajectory info
         if dataset_path is not None:
@@ -1801,6 +1832,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             )
 
         return {
+            # Expert/reference batches reuse the live agent latent command for the
+            # sampled logical env ids instead of drawing a separate latent.
+            "latent_command": self.get_agent_latent_command(env_ids),
             "joint_pos": joint_pos_ref,
             "joint_vel": joint_vel_ref,
             "joint_pos_rel": joint_pos_ref - default_joint_pos,

@@ -2,13 +2,13 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+# ruff: noqa: E402
 
 """Replay reference trajectories and optionally record video."""
 
 """Launch Isaac Sim Simulator first."""
 
 import argparse
-import copy
 import hashlib
 import sys
 from pathlib import Path
@@ -35,6 +35,9 @@ def _append_workspace_sources() -> None:
 _append_workspace_sources()
 
 from isaaclab.app import AppLauncher
+from isaaclab_imitation.tasks.manager_based.imitation.lafan1_manifest import (
+    build_lafan1_loader_kwargs,
+)
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Replay imitation reference data.")
@@ -1028,31 +1031,22 @@ def _apply_motion_source_override(env_cfg) -> None:
     if len(entries) == 0 and not has_schedule_overrides:
         return
 
-    loader_kwargs = copy.deepcopy(getattr(env_cfg, "loader_kwargs", {}))
-    dataset_cfg = copy.deepcopy(loader_kwargs.get("dataset", {}))
-    trajectories_cfg = copy.deepcopy(dataset_cfg.get("trajectories", {}))
     if len(entries) > 0:
-        trajectories_cfg["lafan1_csv"] = entries
-        dataset_cfg["trajectories"] = trajectories_cfg
-        loader_kwargs["dataset"] = dataset_cfg
-        loader_kwargs["dataset_name"] = loader_kwargs.get("dataset_name", "lafan1")
-        loader_kwargs["sim"] = {"dt": float(env_cfg.sim.dt)}
-        loader_kwargs["decimation"] = int(env_cfg.decimation)
         reference_joint_names = list(
             getattr(env_cfg, "reference_joint_names", []) or []
         )
-        if len(reference_joint_names) > 0:
-            loader_kwargs["joint_names"] = reference_joint_names
-
+        control_freq = None
         if args_cli.motion_control_freq is not None:
-            loader_kwargs["control_freq"] = float(args_cli.motion_control_freq)
-        elif "control_freq" not in loader_kwargs:
-            loader_kwargs["control_freq"] = 1.0 / (
-                float(env_cfg.sim.dt) * float(env_cfg.decimation)
-            )
+            control_freq = float(args_cli.motion_control_freq)
 
         env_cfg.loader_type = "lafan1_csv"
-        env_cfg.loader_kwargs = loader_kwargs
+        env_cfg.loader_kwargs = build_lafan1_loader_kwargs(
+            entries=entries,
+            sim_dt=float(env_cfg.sim.dt),
+            decimation=int(env_cfg.decimation),
+            joint_names=reference_joint_names,
+            control_freq=control_freq,
+        )
 
         if args_cli.motion_dataset_path is not None:
             env_cfg.dataset_path = str(Path(args_cli.motion_dataset_path).expanduser())
@@ -1080,12 +1074,13 @@ def _apply_motion_source_override(env_cfg) -> None:
 
     if len(entries) > 0:
         motion_names = [entry["name"] for entry in entries]
+        control_freq = getattr(env_cfg, "loader_kwargs", {}).get("control_freq")
         print(
             "[INFO] Motion override enabled:"
             f" num_sources={len(entries)}"
             f" motions={motion_names}"
             f" dataset_path={env_cfg.dataset_path}"
-            f" control_freq={loader_kwargs['control_freq']}"
+            f" control_freq={control_freq}"
             f" reset_schedule={getattr(env_cfg, 'reset_schedule', 'random')}"
         )
     elif has_schedule_overrides:
