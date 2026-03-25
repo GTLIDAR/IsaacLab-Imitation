@@ -185,12 +185,23 @@ The simplest way to get the full local G1 dataset from the public Hugging Face d
 ```
 
 This downloads the G1 subset into `data/` and then runs the local NPZ + manifest preparation step.
+To bake the G1 arms-up alignment trim into the generated NPZ files, pass
+`--auto_trim_mode g1_shoulder_roll`.
 
 The underlying Python entrypoint is:
 
 ```bash
 conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
     --prepare-npz --headless
+```
+
+For the G1 retargeted set, the public CSV motions often begin with an arms-up
+alignment pose. To bake a per-motion trim into the generated NPZ files, add:
+
+```bash
+conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
+    --prepare-npz --headless \
+    --auto_trim_mode g1_shoulder_roll
 ```
 
 Both commands download the public retargeted LAFAN1 G1 CSV set, convert it to NPZ, and write:
@@ -238,7 +249,7 @@ conda run -n SkillLearning python scripts/write_lafan1_npz_manifest.py \
 Prepare local CSV motions into NPZ plus a manifest with:
 
 ```bash
-python scripts/prepare_lafan1_from_csv.py \
+conda run -n SkillLearning python scripts/prepare_lafan1_from_csv.py \
     --csv_dir /absolute/path/to/csv_motions \
     --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
     --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
@@ -246,6 +257,38 @@ python scripts/prepare_lafan1_from_csv.py \
 ```
 
 If you want one replay MP4 per converted motion, add `--record_videos` and `--video_dir`.
+
+To auto-trim the G1 arms-up alignment segment while rebuilding NPZ files, add:
+
+```bash
+conda run -n SkillLearning python scripts/prepare_lafan1_from_csv.py \
+    --csv_dir /absolute/path/to/csv_motions \
+    --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
+    --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
+    --recursive \
+    --auto_trim_mode g1_shoulder_roll \
+    --overwrite
+```
+
+That trims each CSV before conversion, writes clean NPZ files suitable for
+upload to Hugging Face, and records the source trim range in the manifest as
+provenance.
+
+If you already have NPZ files and only want a trimmed manifest without
+rewriting those NPZ files, use:
+
+```bash
+conda run -n SkillLearning python scripts/prepare_lafan1_from_csv.py \
+    --csv_dir /absolute/path/to/csv_motions \
+    --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
+    --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
+    --recursive \
+    --assume_npz_exists \
+    --auto_trim_mode g1_shoulder_roll
+```
+
+In that mode the per-motion trim is written into each manifest entry as
+`frame_range`, leaving the NPZ payload unchanged.
 
 ### Direct NPZ Sync With Hugging Face
 
@@ -366,3 +409,60 @@ Note that the current hook set is inherited from upstream Isaac Lab conventions.
 For cluster submission, local Isaac Lab Python installation is not required on the submission machine if jobs run inside
 the provided container or Apptainer image. See `docker/cluster` and [REPO_SETUP.md](REPO_SETUP.md) for the expected sync
 layout and environment variables.
+
+Cluster jobs submitted through `docker/cluster/cluster_interface.sh job ...` now auto-check the G1 dataset tree before
+running the user workload. The container-side preflight in `docker/cluster/run_singularity.sh` verifies that the G1 NPZ
+tree under `${CLUSTER_G1_DATA_ROOT:-${CLUSTER_DATA_DIR}/lafan1}` contains at least 40 motions. If the dataset is
+incomplete, it downloads the G1 NPZ dataset from Hugging Face with `scripts/setup_g1_lafan1_npz_dataset.py` and
+regenerates `g1_lafan1_manifest.json` with `scripts/write_lafan1_npz_manifest.py`.
+
+Submitted jobs also append a default full-dataset override:
+
+```text
+env.lafan1_manifest_path=${CLUSTER_G1_MANIFEST_PATH:-${CLUSTER_G1_DATA_ROOT:-${CLUSTER_DATA_DIR}/lafan1}/manifests/g1_lafan1_manifest.json}
+```
+
+That gives cluster training the 40-motion G1 manifest by default. If you want a different manifest, either set
+`CLUSTER_G1_MANIFEST_PATH` in `docker/cluster/.env.cluster`, disable the behavior with
+`CLUSTER_APPEND_DEFAULT_G1_MANIFEST=0`, or pass `env.lafan1_manifest_path=...` explicitly in the submitted job args.
+
+Relevant cluster env vars:
+
+- `CLUSTER_AUTO_SETUP_G1_DATA=1`: enable the automatic G1 dataset bootstrap before each job (default)
+- `CLUSTER_G1_EXPECTED_MOTION_COUNT=40`: minimum motion count required for the G1 manifest check
+- `CLUSTER_G1_DATA_ROOT=${CLUSTER_DATA_DIR}/lafan1`: override the G1 dataset root checked by the preflight helper
+- `CLUSTER_G1_REPO_ID=GeorgiaTech/g1_lafan1_50hz`: override the Hugging Face dataset repo used for G1 NPZ download
+- `CLUSTER_HF_TOKEN_FILE=/path/to/.hf_token`: recommended way to provide a Hugging Face read token for cluster-side dataset download
+- `CLUSTER_HF_TOKEN=hf_xxx`: inline token override if you do not want to use a token file
+- `CLUSTER_WANDB_API_KEY_FILE=/path/to/.wandb_api_key`: recommended way to provide a W&B API key from the cluster host into the container
+- `CLUSTER_WANDB_API_KEY=...`: inline W&B API key override if you do not want to use a token file
+- `CLUSTER_APPEND_DEFAULT_G1_MANIFEST=1`: append the default full-manifest override to submitted jobs
+- `CLUSTER_G1_MANIFEST_PATH=${CLUSTER_G1_DATA_ROOT}/manifests/g1_lafan1_manifest.json`: override the default full-manifest job argument
+
+For private repos or authenticated Hugging Face access on the cluster, the recommended setup is:
+
+```bash
+printf '%s\n' 'hf_...' > ~/.hf_token
+chmod 600 ~/.hf_token
+```
+
+Then set in `docker/cluster/.env.cluster`:
+
+```bash
+CLUSTER_HF_TOKEN_FILE=/home/<user>/.hf_token
+```
+
+For W&B, the same host-side pattern is recommended:
+
+```bash
+printf '%s\n' 'your_wandb_api_key' > ~/.wandb_api_key
+chmod 600 ~/.wandb_api_key
+```
+
+Then set in `docker/cluster/.env.cluster`:
+
+```bash
+CLUSTER_WANDB_API_KEY_FILE=/home/<user>/.wandb_api_key
+```
+
+The W&B key file is read on the cluster host before `singularity exec`, then injected into the container as `WANDB_API_KEY`.

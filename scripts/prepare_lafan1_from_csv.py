@@ -13,11 +13,17 @@ Workflow:
 4) Write one manifest JSON consumable by ImitationG1LafanTrackEnvCfg.
 
 Example:
-    python scripts/prepare_lafan1_from_csv.py \
+    conda run -n SkillLearning python scripts/prepare_lafan1_from_csv.py \
       --csv_dir /abs/path/csv_motions \
       --npz_dir /abs/path/npz_motions \
       --manifest_path /abs/path/g1_lafan1_manifest.json \
       --recursive --headless
+
+    conda run -n SkillLearning python scripts/prepare_lafan1_from_csv.py \
+      --csv_dir /abs/path/csv_motions \
+      --npz_dir /abs/path/npz_motions \
+      --manifest_path /abs/path/g1_lafan1_manifest.json \
+      --recursive --auto_trim_mode g1_shoulder_roll --overwrite --headless
 """
 
 from __future__ import annotations
@@ -31,6 +37,13 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import numpy as np
+
+
+G1_CSV_JOINT_OFFSET = 7
+G1_LEFT_SHOULDER_ROLL_INDEX = 16
+G1_RIGHT_SHOULDER_ROLL_INDEX = 23
 
 
 def _resolve_default_converter() -> Path:
@@ -103,7 +116,7 @@ def _run_conversion(
 
 def _run_batch_conversion(
     *,
-    jobs: list[dict[str, str]],
+    jobs: list[dict[str, object]],
     batch_converter_script: Path,
     python_exe: str,
     input_fps: float,
@@ -174,6 +187,192 @@ def _build_video_output(csv_file: Path, csv_root: Path, video_root: Path) -> Pat
     return (video_root / relative).with_suffix(".mp4")
 
 
+def _count_csv_frames(csv_file: Path) -> int:
+    with csv_file.open("r", encoding="utf-8") as handle:
+        return sum(1 for _ in handle)
+
+
+def _read_npz_fps(npz_file: Path, fallback_fps: float) -> float:
+    try:
+        with np.load(npz_file) as npz_data:
+            if "fps" in npz_data.files:
+                return float(np.asarray(npz_data["fps"]).reshape(-1)[0])
+    except Exception:
+        pass
+    return float(fallback_fps)
+
+
+def _validate_frame_range(
+    frame_range: tuple[int, int], total_frames: int, *, csv_file: Path
+) -> tuple[int, int]:
+    start, end = frame_range
+    if start < 1:
+        raise ValueError(f"frame_range start must be >= 1 for {csv_file}.")
+    if end < start:
+        raise ValueError(
+            f"frame_range end must be >= start for {csv_file}: {frame_range}."
+        )
+    if end > total_frames:
+        raise ValueError(
+            f"frame_range {frame_range} exceeds csv length {total_frames} for {csv_file}."
+        )
+    return (start, end)
+
+
+def _find_first_consecutive_true(values: np.ndarray, *, hold_frames: int) -> int | None:
+    run_length = 0
+    for index, flag in enumerate(values):
+        run_length = run_length + 1 if bool(flag) else 0
+        if run_length >= hold_frames:
+            return index - hold_frames + 2
+    return None
+
+
+def _infer_g1_shoulder_roll_trim_start(
+    csv_file: Path,
+    *,
+    search_frames: int,
+    shoulder_roll_threshold: float,
+    hold_frames: int,
+    pre_roll_frames: int,
+) -> tuple[int, int, dict[str, object]]:
+    total_frames = _count_csv_frames(csv_file)
+    max_rows = min(int(search_frames), total_frames)
+    usecols = (
+        G1_CSV_JOINT_OFFSET + G1_LEFT_SHOULDER_ROLL_INDEX,
+        G1_CSV_JOINT_OFFSET + G1_RIGHT_SHOULDER_ROLL_INDEX,
+    )
+    shoulder_roll = np.loadtxt(
+        csv_file,
+        delimiter=",",
+        dtype=np.float32,
+        usecols=usecols,
+        max_rows=max_rows,
+    )
+    shoulder_roll = np.atleast_2d(shoulder_roll)
+    shoulder_roll = shoulder_roll.reshape(-1, 2)
+    below_threshold = np.logical_and(
+        np.abs(shoulder_roll[:, 0]) <= shoulder_roll_threshold,
+        np.abs(shoulder_roll[:, 1]) <= shoulder_roll_threshold,
+    )
+    detected_start = _find_first_consecutive_true(
+        below_threshold, hold_frames=hold_frames
+    )
+    if detected_start is None:
+        return (
+            1,
+            total_frames,
+            {
+                "detected": False,
+                "detected_start_frame": None,
+                "applied_start_frame": 1,
+                "total_frames": total_frames,
+                "search_frames": max_rows,
+            },
+        )
+
+    applied_start = max(1, int(detected_start) - int(pre_roll_frames))
+    applied_start = min(applied_start, total_frames)
+    return (
+        applied_start,
+        total_frames,
+        {
+            "detected": True,
+            "detected_start_frame": int(detected_start),
+            "applied_start_frame": int(applied_start),
+            "total_frames": total_frames,
+            "search_frames": max_rows,
+        },
+    )
+
+
+def _resolve_motion_frame_ranges(
+    *,
+    csv_files: list[Path],
+    args: argparse.Namespace,
+) -> tuple[dict[Path, tuple[int, int] | None], dict[Path, dict[str, object]]]:
+    if args.frame_range is not None and args.auto_trim_mode != "none":
+        raise ValueError("Use either --frame_range or --auto_trim_mode, not both.")
+    if args.auto_trim_search_frames <= 0:
+        raise ValueError("--auto_trim_search_frames must be > 0.")
+    if args.auto_trim_hold_frames <= 0:
+        raise ValueError("--auto_trim_hold_frames must be > 0.")
+    if args.auto_trim_pre_roll < 0:
+        raise ValueError("--auto_trim_pre_roll must be >= 0.")
+    if args.auto_trim_shoulder_roll_threshold <= 0.0:
+        raise ValueError("--auto_trim_shoulder_roll_threshold must be > 0.")
+
+    frame_ranges: dict[Path, tuple[int, int] | None] = {}
+    trim_details: dict[Path, dict[str, object]] = {}
+
+    requested_frame_range = (
+        tuple(int(value) for value in args.frame_range)
+        if args.frame_range is not None
+        else None
+    )
+
+    for csv_file in csv_files:
+        if requested_frame_range is not None:
+            total_frames = _count_csv_frames(csv_file)
+            resolved = _validate_frame_range(
+                requested_frame_range, total_frames, csv_file=csv_file
+            )
+            source_frame_range = (
+                [int(resolved[0]), int(resolved[1])]
+                if resolved != (1, total_frames)
+                else None
+            )
+            frame_ranges[csv_file] = (
+                resolved if source_frame_range is not None else None
+            )
+            trim_details[csv_file] = {
+                "mode": "manual",
+                "detected": True,
+                "detected_start_frame": int(resolved[0]),
+                "applied_start_frame": int(resolved[0]),
+                "total_frames": int(total_frames),
+                "source_frame_range": source_frame_range,
+            }
+            continue
+
+        if args.auto_trim_mode == "g1_shoulder_roll":
+            start_frame, total_frames, detail = _infer_g1_shoulder_roll_trim_start(
+                csv_file,
+                search_frames=int(args.auto_trim_search_frames),
+                shoulder_roll_threshold=float(args.auto_trim_shoulder_roll_threshold),
+                hold_frames=int(args.auto_trim_hold_frames),
+                pre_roll_frames=int(args.auto_trim_pre_roll),
+            )
+            source_frame_range = (
+                [int(start_frame), int(total_frames)] if start_frame > 1 else None
+            )
+            if start_frame <= 1:
+                frame_ranges[csv_file] = None
+            else:
+                frame_ranges[csv_file] = (int(start_frame), int(total_frames))
+            trim_details[csv_file] = {
+                "mode": "g1_shoulder_roll",
+                **detail,
+                "source_frame_range": source_frame_range,
+                "threshold": float(args.auto_trim_shoulder_roll_threshold),
+                "hold_frames": int(args.auto_trim_hold_frames),
+                "pre_roll": int(args.auto_trim_pre_roll),
+            }
+            continue
+
+        frame_ranges[csv_file] = None
+        trim_details[csv_file] = {
+            "mode": "none",
+            "detected": False,
+            "detected_start_frame": None,
+            "applied_start_frame": 1,
+            "total_frames": int(_count_csv_frames(csv_file)),
+            "source_frame_range": None,
+        }
+
+    return frame_ranges, trim_details
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Batch convert CSV motions to NPZ and generate manifest JSON."
@@ -233,6 +432,47 @@ def main() -> None:
         metavar=("START", "END"),
         default=None,
         help="Optional frame range passed to converter (1-indexed inclusive).",
+    )
+    parser.add_argument(
+        "--auto_trim_mode",
+        type=str,
+        choices=("none", "g1_shoulder_roll"),
+        default="none",
+        help=(
+            "Optional per-motion trim heuristic. "
+            "`g1_shoulder_roll` trims the alignment pose by finding when both "
+            "G1 shoulder-roll joints drop below a threshold."
+        ),
+    )
+    parser.add_argument(
+        "--auto_trim_search_frames",
+        type=int,
+        default=800,
+        help="Maximum number of source CSV frames to inspect when auto trim is enabled.",
+    )
+    parser.add_argument(
+        "--auto_trim_shoulder_roll_threshold",
+        type=float,
+        default=1.0,
+        help=(
+            "Absolute shoulder-roll threshold in radians used by "
+            "`--auto_trim_mode g1_shoulder_roll`."
+        ),
+    )
+    parser.add_argument(
+        "--auto_trim_hold_frames",
+        type=int,
+        default=5,
+        help=(
+            "Require the auto-trim condition to hold for this many consecutive "
+            "frames before accepting the detected start."
+        ),
+    )
+    parser.add_argument(
+        "--auto_trim_pre_roll",
+        type=int,
+        default=5,
+        help="Keep this many frames before the detected auto-trim start.",
     )
     parser.add_argument(
         "--headless",
@@ -338,14 +578,37 @@ def main() -> None:
         else _default_video_dir(npz_dir)
     )
 
-    batch_jobs: list[dict[str, str]] = []
-    frame_range = tuple(args.frame_range) if args.frame_range is not None else None
+    resolved_frame_ranges, trim_details = _resolve_motion_frame_ranges(
+        csv_files=csv_files, args=args
+    )
+    trimmed_motion_count = sum(
+        1 for frame_range in resolved_frame_ranges.values() if frame_range is not None
+    )
+
+    if args.frame_range is not None or args.auto_trim_mode != "none":
+        for csv_file in csv_files:
+            detail = trim_details[csv_file]
+            source_range = detail.get("source_frame_range")
+            if source_range is None:
+                print(
+                    f"[INFO] Full-range source: {csv_file} | total_frames={detail['total_frames']}"
+                )
+                continue
+            detected_start = detail.get("detected_start_frame")
+            print(
+                f"[INFO] Source trim for {csv_file} | mode={detail['mode']} "
+                f"| source_frame_range={source_range[0]}-{source_range[1]} "
+                f"| detected_start={detected_start}"
+            )
+
+    batch_jobs: list[dict[str, object]] = []
 
     for csv_file in csv_files:
         npz_file = _build_npz_path(
             csv_file=csv_file, csv_root=csv_dir, npz_root=npz_dir
         )
         npz_file.parent.mkdir(parents=True, exist_ok=True)
+        resolved_frame_range = resolved_frame_ranges[csv_file]
 
         if args.assume_npz_exists:
             if not npz_file.is_file():
@@ -356,16 +619,27 @@ def main() -> None:
         else:
             if npz_file.exists() and not args.overwrite:
                 if args.skip_existing:
+                    if resolved_frame_range is not None:
+                        raise FileExistsError(
+                            "A per-motion source trim was requested, but the target NPZ already "
+                            f"exists: {npz_file}. Use --overwrite to rebuild trimmed NPZs or "
+                            "--assume_npz_exists to leave NPZs untouched and encode the trim in the manifest."
+                        )
                     print(f"[INFO] Skipping existing NPZ: {npz_file}")
                 else:
                     raise FileExistsError(
                         f"Target NPZ exists: {npz_file}. Use --overwrite or --skip_existing."
                     )
             else:
-                job: dict[str, str] = {
+                job: dict[str, object] = {
                     "input_file": str(csv_file),
                     "output_name": str(npz_file),
                 }
+                if resolved_frame_range is not None:
+                    job["frame_range"] = [
+                        int(resolved_frame_range[0]),
+                        int(resolved_frame_range[1]),
+                    ]
                 if args.record_videos:
                     job["video_output"] = str(
                         _build_video_output(
@@ -381,7 +655,7 @@ def main() -> None:
             python_exe=args.python,
             input_fps=float(args.input_fps),
             output_fps=float(args.output_fps),
-            frame_range=frame_range,
+            frame_range=None,
             headless=bool(args.headless),
             device=args.device,
             record_videos=bool(args.record_videos),
@@ -407,11 +681,21 @@ def main() -> None:
         entry: dict[str, object] = {
             "name": motion_name,
             "path": os.path.relpath(npz_file, manifest_path.parent),
-            # Source is NPZ generated at output_fps.
-            "input_fps": float(args.output_fps),
+            "input_fps": _read_npz_fps(npz_file, fallback_fps=float(args.output_fps)),
         }
-        if args.frame_range is not None:
-            entry["frame_range"] = [int(args.frame_range[0]), int(args.frame_range[1])]
+        source_frame_range = resolved_frame_ranges[csv_file]
+        trim_detail = trim_details[csv_file]
+        if args.assume_npz_exists and source_frame_range is not None:
+            entry["frame_range"] = [
+                int(source_frame_range[0]),
+                int(source_frame_range[1]),
+            ]
+        elif source_frame_range is not None:
+            entry["source_frame_range"] = [
+                int(source_frame_range[0]),
+                int(source_frame_range[1]),
+            ]
+            entry["trim_mode"] = str(trim_detail["mode"])
         manifest_entries.append(entry)
 
     manifest = {
@@ -429,6 +713,31 @@ def main() -> None:
             "output_fps": float(args.output_fps),
             "converter_script": str(converter_script),
             "assume_npz_exists": bool(args.assume_npz_exists),
+            "trimmed_motion_count": int(trimmed_motion_count),
+            "source_trim_applied_in_manifest": bool(
+                args.assume_npz_exists and trimmed_motion_count > 0
+            ),
+            "source_trim_baked_into_npz": bool(
+                (not args.assume_npz_exists) and trimmed_motion_count > 0
+            ),
+            "requested_frame_range": (
+                [int(args.frame_range[0]), int(args.frame_range[1])]
+                if args.frame_range is not None
+                else None
+            ),
+            "auto_trim": (
+                {
+                    "mode": args.auto_trim_mode,
+                    "search_frames": int(args.auto_trim_search_frames),
+                    "shoulder_roll_threshold": float(
+                        args.auto_trim_shoulder_roll_threshold
+                    ),
+                    "hold_frames": int(args.auto_trim_hold_frames),
+                    "pre_roll": int(args.auto_trim_pre_roll),
+                }
+                if args.auto_trim_mode != "none"
+                else None
+            ),
             "record_videos": bool(args.record_videos),
             "video_dir": str(video_dir) if args.record_videos else None,
             "paths_are_relative_to_manifest": True,
@@ -440,6 +749,7 @@ def main() -> None:
 
     print(f"[INFO] Wrote manifest: {manifest_path}")
     print(f"[INFO] Motion count: {len(manifest_entries)}")
+    print(f"[INFO] Source-trimmed motions: {trimmed_motion_count}")
     if args.record_videos:
         print(f"[INFO] Video root: {video_dir}")
 

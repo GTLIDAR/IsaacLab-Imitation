@@ -2,7 +2,7 @@ from isaaclab.utils import configclass
 
 from isaaclab_imitation.envs.rlopt import IPMDSRRLOptConfig
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
-    G1_IPMD_REWARD_OBS_KEYS,
+    G1_REWARD_OBS_KEYS,
     G1_POLICY_OBS_KEYS,
     G1_VALUE_OBS_KEYS,
 )
@@ -22,7 +22,7 @@ class G1ImitationRLOptIPMDSRConfig(IPMDSRRLOptConfig):
 
         self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
         self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
-        self.ipmd.reward_input_keys = list(G1_IPMD_REWARD_OBS_KEYS)
+        self.ipmd.reward_input_keys = list(G1_REWARD_OBS_KEYS)
 
         # More initial exploration to improve policy-state coverage for inverse reward.
         self.collector.init_random_frames = 49152

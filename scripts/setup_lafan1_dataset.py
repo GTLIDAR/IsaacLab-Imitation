@@ -17,6 +17,9 @@ Examples:
 
     conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
         --prepare-npz --headless
+
+    conda run -n SkillLearning python scripts/setup_lafan1_dataset.py \
+        --prepare-npz --headless --auto_trim_mode g1_shoulder_roll
 """
 
 from __future__ import annotations
@@ -154,6 +157,17 @@ def _run_prepare_pipeline(
         cmd.extend(
             ["--frame_range", str(args.frame_range[0]), str(args.frame_range[1])]
         )
+    if args.auto_trim_mode != "none":
+        cmd.extend(["--auto_trim_mode", args.auto_trim_mode])
+        cmd.extend(["--auto_trim_search_frames", str(args.auto_trim_search_frames)])
+        cmd.extend(
+            [
+                "--auto_trim_shoulder_roll_threshold",
+                str(args.auto_trim_shoulder_roll_threshold),
+            ]
+        )
+        cmd.extend(["--auto_trim_hold_frames", str(args.auto_trim_hold_frames)])
+        cmd.extend(["--auto_trim_pre_roll", str(args.auto_trim_pre_roll)])
     if args.device is not None:
         cmd.extend(["--device", args.device])
     if args.headless:
@@ -240,6 +254,40 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar=("START", "END"),
         default=None,
         help="Optional frame range passed through to prepare_lafan1_from_csv.py.",
+    )
+    parser.add_argument(
+        "--auto_trim_mode",
+        type=str,
+        choices=("none", "g1_shoulder_roll"),
+        default="none",
+        help=(
+            "Optional per-motion trim heuristic forwarded to "
+            "prepare_lafan1_from_csv.py."
+        ),
+    )
+    parser.add_argument(
+        "--auto_trim_search_frames",
+        type=int,
+        default=800,
+        help="Maximum number of CSV frames inspected by the auto-trim heuristic.",
+    )
+    parser.add_argument(
+        "--auto_trim_shoulder_roll_threshold",
+        type=float,
+        default=1.0,
+        help="Absolute shoulder-roll threshold for --auto_trim_mode g1_shoulder_roll.",
+    )
+    parser.add_argument(
+        "--auto_trim_hold_frames",
+        type=int,
+        default=5,
+        help="Require the auto-trim condition to hold for this many frames.",
+    )
+    parser.add_argument(
+        "--auto_trim_pre_roll",
+        type=int,
+        default=5,
+        help="Keep this many frames before the detected auto-trim start.",
     )
     parser.add_argument(
         "--headless",
@@ -346,6 +394,25 @@ def main() -> None:
             "--output_fps",
             str(args.output_fps),
         ]
+        if args.frame_range is not None:
+            preview_cmd.extend(
+                ["--frame_range", str(args.frame_range[0]), str(args.frame_range[1])]
+            )
+        if args.auto_trim_mode != "none":
+            preview_cmd.extend(["--auto_trim_mode", args.auto_trim_mode])
+            preview_cmd.extend(
+                ["--auto_trim_search_frames", str(args.auto_trim_search_frames)]
+            )
+            preview_cmd.extend(
+                [
+                    "--auto_trim_shoulder_roll_threshold",
+                    str(args.auto_trim_shoulder_roll_threshold),
+                ]
+            )
+            preview_cmd.extend(
+                ["--auto_trim_hold_frames", str(args.auto_trim_hold_frames)]
+            )
+            preview_cmd.extend(["--auto_trim_pre_roll", str(args.auto_trim_pre_roll)])
         print("[INFO] Raw download is ready.")
         print("[INFO] To generate NPZ files and a manifest later, run:")
         print(f"[CMD]  {_format_command(preview_cmd)}")

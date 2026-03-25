@@ -61,7 +61,10 @@ parser.add_argument(
     "--jobs_json",
     type=str,
     required=True,
-    help="JSON file containing a list of {'input_file', 'output_name', 'video_output?'} jobs.",
+    help=(
+        "JSON file containing a list of job objects with "
+        "{'input_file', 'output_name', 'video_output?', 'frame_range?' }."
+    ),
 )
 parser.add_argument(
     "--input_fps",
@@ -143,6 +146,21 @@ class MotionJob:
     input_file: Path
     output_name: Path
     video_output: Path | None = None
+    frame_range: tuple[int, int] | None = None
+
+
+def _normalize_frame_range(value: object) -> tuple[int, int] | None:
+    if value is None:
+        return None
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        raise ValueError("frame_range must be [start, end].")
+    start = int(value[0])
+    end = int(value[1])
+    if start < 1:
+        raise ValueError("frame_range start must be >= 1.")
+    if end < start:
+        raise ValueError("frame_range end must be >= start.")
+    return (start, end)
 
 
 def _look_at_quat_world(
@@ -353,11 +371,13 @@ def _load_jobs(jobs_json_path: Path) -> list[MotionJob]:
                 raise FileExistsError(
                     f"Video output exists: {video_output}. Use --overwrite_video to replace it."
                 )
+        frame_range = _normalize_frame_range(job_like.get("frame_range"))
         jobs.append(
             MotionJob(
                 input_file=input_file,
                 output_name=output_name,
                 video_output=video_output,
+                frame_range=frame_range,
             )
         )
     return jobs
@@ -374,7 +394,7 @@ def _build_batched_motion_data(
     jobs: list[MotionJob],
     device: torch.device,
 ) -> BatchedMotionData:
-    frame_range = (
+    default_frame_range = (
         tuple(args_cli.frame_range) if args_cli.frame_range is not None else None
     )
     loaders = [
@@ -383,7 +403,9 @@ def _build_batched_motion_data(
             input_fps=float(args_cli.input_fps),
             output_fps=float(args_cli.output_fps),
             device=device,
-            frame_range=frame_range,
+            frame_range=job.frame_range
+            if job.frame_range is not None
+            else default_frame_range,
         )
         for job in jobs
     ]

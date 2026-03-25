@@ -35,9 +35,7 @@ def _append_workspace_sources() -> None:
 _append_workspace_sources()
 
 from isaaclab.app import AppLauncher
-from isaaclab_imitation.tasks.manager_based.imitation.lafan1_manifest import (
-    build_lafan1_loader_kwargs,
-)
+
 
 # add argparse arguments
 parser = argparse.ArgumentParser(description="Replay imitation reference data.")
@@ -296,7 +294,9 @@ import isaaclab_imitation  # noqa: F401
 from isaaclab.utils.math import quat_apply, quat_apply_inverse, quat_error_magnitude
 from isaaclab.utils.dict import print_dict
 from isaaclab_tasks.utils.hydra import hydra_task_config
-
+from isaaclab_imitation.tasks.manager_based.imitation.lafan1_manifest import (
+    build_lafan1_loader_kwargs,
+)
 from tensordict import TensorDict, TensorDictBase
 
 try:

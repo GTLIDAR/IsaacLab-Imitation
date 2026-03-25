@@ -108,7 +108,8 @@ def _compose_obs_keys(
 G1_POLICY_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
     "policy",
     [
-        "latent_command",
+        "reference_motion",
+        "reference_anchor_ori_b",
         "base_lin_vel",
         "base_ang_vel",
         "joint_pos_rel",
@@ -121,6 +122,8 @@ G1_POLICY_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
 G1_VALUE_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
     "critic",
     [
+        "reference_motion",
+        "reference_anchor_ori_b",
         "body_pos",
         "body_ori",
         "base_lin_vel",
@@ -167,6 +170,22 @@ class G1ObservationCfg:
         """Policy observations."""
 
         latent_command = ObsTerm(func=mdp.agent_latent_command)
+        reference_motion = ObsTerm(
+            func=mdp.reference_motion_command,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=G1_29DOF_JOINT_NAMES,
+                )
+            },
+        )
+        reference_anchor_ori_b = ObsTerm(
+            func=mdp.reference_anchor_ori_b,
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
+        )
         base_lin_vel = ObsTerm(
             func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1)
         )
@@ -187,7 +206,29 @@ class G1ObservationCfg:
     class CriticCfg(ObsGroup):
         """Privileged critic observations."""
 
-        latent_command = ObsTerm(func=mdp.agent_latent_command)
+        reference_motion = ObsTerm(
+            func=mdp.reference_motion_command,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=G1_29DOF_JOINT_NAMES,
+                )
+            },
+        )
+        reference_anchor_pos_b = ObsTerm(
+            func=mdp.reference_anchor_pos_b,
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
+        )
+        reference_anchor_ori_b = ObsTerm(
+            func=mdp.reference_anchor_ori_b,
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "anchor_body_name": "torso_link",
+            },
+        )
 
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
@@ -509,7 +550,7 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
 class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
     """General 29-DoF motion-tracking env driven by a LAFAN1 manifest."""
 
-    dataset_path: str | None = None
+    dataset_path: str | None = "data/lafan1/g1/"
     loader_type: str = "lafan1_csv"
     loader_kwargs: dict = {
         "dataset_name": "lafan1",
