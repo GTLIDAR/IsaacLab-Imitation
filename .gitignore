@@ -72,5 +72,6 @@ scripts/rsl_rl/__pycache__/cli_args.cpython-311.pyc
 # data folder
 data/*
 !data/README.md
+!data/unitree
 
 .omc/

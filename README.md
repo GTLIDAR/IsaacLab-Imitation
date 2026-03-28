@@ -109,6 +109,18 @@ python scripts/rlopt/train.py \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
+For imitation-based RL, the recommended starting point in this repo is RLOpt IPMD on
+`Isaac-Imitation-G1-LafanTrack-v0`. If you want a smaller single-motion setup for the
+retargeted Unitree `dance102` clip, use:
+
+```bash
+python scripts/rlopt/train.py \
+    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --algo IPMD \
+    --headless \
+    env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json
+```
+
 Train with RLOpt PPO:
 
 ```bash
@@ -169,9 +181,14 @@ Local manifests:
 
 - `data/lafan1/manifests/g1_lafan1_manifest.json`: full local G1 LAFAN1 manifest
 - `data/lafan1/manifests/g1_debug_manifest.json`: optional smaller local subset
+- `data/unitree/manifests/g1_unitree_dance102_manifest.json`: single-motion Unitree
+  `dance102` manifest pointing at `data/unitree/npz/g1/G1_Take_102.bvh_60hz.npz`
 
 The full local G1 set is not shipped in git. When you prepare local motions under `data/lafan1/npz/g1/`, the full
 manifest should live under `data/lafan1/manifests/g1_lafan1_manifest.json`.
+
+The Unitree `dance102` manifest is useful for quick smoke tests and smaller imitation-based
+RL runs before scaling up to the full LAFAN1 manifest.
 
 See `data/README.md` for the expected local directory layout and the common local-data commands.
 
