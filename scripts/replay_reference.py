@@ -60,7 +60,7 @@ parser.add_argument(
 parser.add_argument(
     "--task",
     type=str,
-    default="Isaac-Imitation-G1-LafanTrack-v0",
+    default="Isaac-Imitation-G1-v0",
     help="Name of the task.",
 )
 parser.add_argument(

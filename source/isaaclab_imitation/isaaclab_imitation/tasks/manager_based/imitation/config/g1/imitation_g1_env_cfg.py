@@ -97,56 +97,38 @@ G1_EE_BODY_NAMES: list[str] = [
     "right_wrist_yaw_link",
 ]
 
-
-def _compose_obs_keys(
-    group_name: str, term_names: list[str]
-) -> list[str | tuple[str, ...]]:
-    """Compose nested observation keys from group and term names."""
-    return [(group_name, term_name) for term_name in term_names]
+G1_OBS_ANCHOR_BODY_NAME = "torso_link"
 
 
-G1_POLICY_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
-    "policy",
-    [
-        "reference_motion",
-        "reference_anchor_ori_b",
-        "base_lin_vel",
-        "base_ang_vel",
-        "joint_pos_rel",
-        "joint_vel_rel",
-        "last_action",
-    ],
-)
+def _g1_tracked_body_asset_cfg() -> SceneEntityCfg:
+    return SceneEntityCfg(
+        "robot",
+        body_names=G1_TRACKED_BODY_NAMES,
+        preserve_order=True,
+    )
 
 
-G1_VALUE_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
-    "critic",
-    [
-        "reference_motion",
-        "reference_anchor_ori_b",
-        "body_pos",
-        "body_ori",
-        "base_lin_vel",
-        "base_ang_vel",
-        "joint_pos_rel",
-        "joint_vel_rel",
-        "joint_pos",
-        "joint_vel",
-        "last_action",
-    ],
-)
+def _g1_tracked_body_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": _g1_tracked_body_asset_cfg(),
+        "anchor_body_name": G1_OBS_ANCHOR_BODY_NAME,
+    }
 
-G1_REWARD_OBS_KEYS: list[str | tuple[str, ...]] = _compose_obs_keys(
-    "reference",
-    [
-        "joint_pos",
-        "joint_vel",
-        "root_pos",
-        "root_quat",
-        "root_lin_vel",
-        "root_ang_vel",
-    ],
-)
+
+def _g1_reference_motion_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": SceneEntityCfg(
+            "robot",
+            joint_names=G1_29DOF_JOINT_NAMES,
+        )
+    }
+
+
+def _g1_reference_anchor_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": SceneEntityCfg("robot"),
+        "anchor_body_name": G1_OBS_ANCHOR_BODY_NAME,
+    }
 
 
 @configclass
@@ -169,37 +151,28 @@ class G1ObservationCfg:
     class PolicyCfg(ObsGroup):
         """Policy observations."""
 
-        latent_command = ObsTerm(func=mdp.agent_latent_command)
         reference_motion = ObsTerm(
             func=mdp.reference_motion_command,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=G1_29DOF_JOINT_NAMES,
-                )
-            },
+            params=_g1_reference_motion_obs_params(),
         )
         reference_anchor_ori_b = ObsTerm(
             func=mdp.reference_anchor_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
-        )
-        base_lin_vel = ObsTerm(
-            func=mdp.base_lin_vel, noise=Unoise(n_min=-0.1, n_max=0.1)
+            params=_g1_reference_anchor_obs_params(),
+            noise=Unoise(n_min=-0.05, n_max=0.05),
         )
         base_ang_vel = ObsTerm(
             func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2)
         )
         joint_pos_rel = ObsTerm(
-            func=mdp.joint_pos, noise=Unoise(n_min=-0.01, n_max=0.01)
+            func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01)
         )
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-0.5, n_max=0.5))
+        joint_vel_rel = ObsTerm(
+            func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5)
+        )
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
-            self.enable_corruption = False
+            self.enable_corruption = True
             self.concatenate_terms = False
 
     @configclass
@@ -208,57 +181,28 @@ class G1ObservationCfg:
 
         reference_motion = ObsTerm(
             func=mdp.reference_motion_command,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    joint_names=G1_29DOF_JOINT_NAMES,
-                )
-            },
+            params=_g1_reference_motion_obs_params(),
         )
         reference_anchor_pos_b = ObsTerm(
             func=mdp.reference_anchor_pos_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
+            params=_g1_reference_anchor_obs_params(),
         )
         reference_anchor_ori_b = ObsTerm(
             func=mdp.reference_anchor_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg("robot"),
-                "anchor_body_name": "torso_link",
-            },
+            params=_g1_reference_anchor_obs_params(),
         )
-
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    body_names=G1_TRACKED_BODY_NAMES,
-                    preserve_order=True,
-                ),
-                "anchor_body_name": "torso_link",
-            },
+            params=_g1_tracked_body_obs_params(),
         )
         body_ori = ObsTerm(
             func=mdp.robot_body_ori_b,
-            params={
-                "asset_cfg": SceneEntityCfg(
-                    "robot",
-                    body_names=G1_TRACKED_BODY_NAMES,
-                    preserve_order=True,
-                ),
-                "anchor_body_name": "torso_link",
-            },
-            history_length=3,
+            params=_g1_tracked_body_obs_params(),
         )
-        base_lin_vel = ObsTerm(func=mdp.base_lin_vel, history_length=3)
-        base_ang_vel = ObsTerm(func=mdp.base_ang_vel, history_length=3)
-        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel, history_length=3)
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel, history_length=3)
-        joint_pos = ObsTerm(func=mdp.joint_pos, history_length=3)
-        joint_vel = ObsTerm(func=mdp.joint_vel, history_length=3)
+        base_lin_vel = ObsTerm(func=mdp.base_lin_vel)
+        base_ang_vel = ObsTerm(func=mdp.base_ang_vel)
+        joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel)
+        joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel)
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -487,6 +431,14 @@ class G1TerminationsCfg:
             "threshold": 0.25,
         },
     )
+    # body too low
+    base_too_low = DoneTerm(
+        func=mdp.root_height_below_minimum,
+        params={
+            "minimum_height": 0.4,
+            "asset_cfg": SceneEntityCfg("robot", body_names="torso_link"),
+        },
+    )
 
 
 @configclass
@@ -503,6 +455,7 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
     replay_reference: bool = False
     replay_only: bool = False
     reference_start_frame: int = 0
+    enable_latent_command: bool = False
     latent_command_dim: int = 64
 
     _debug_rewards: bool = False
@@ -681,7 +634,10 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
         if dataset_path_explicit and self.dataset_path is not None:
             self.dataset_path = str(Path(self.dataset_path).expanduser().resolve())
         else:
-            self.dataset_path = dataset_path_from_entries(manifest_entries)
+            self.dataset_path = dataset_path_from_entries(
+                manifest_entries,
+                manifest_path=self.lafan1_manifest_path,
+            )
 
         if motions_explicit and self.motions is not None:
             self.motions = list(self.motions)

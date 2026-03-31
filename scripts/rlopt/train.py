@@ -145,13 +145,10 @@ from rlopt.agent import AMP, ASE, GAIL, IPMD, IPMDBilinear, IPMDSR, PPO, SAC
 from rlopt.config_base import RLOptConfig, TrainerConfig
 from torchrl.envs import (
     Compose,
-    ExcludeTransform,
     RewardSum,
     StepCounter,
     TransformedEnv,
 )
-from torchrl.record import PixelRenderTransform, VideoRecorder
-from torchrl.record.loggers.csv import CSVLogger
 
 torch.set_float32_matmul_precision("high")
 
@@ -167,6 +164,17 @@ ALGORITHM_CLASS_MAP = {
     "GAIL": GAIL,
     "AMP": AMP,
     "ASE": ASE,
+}
+
+ENTRY_POINT_ALGORITHM_MAP = {
+    "rlopt_ppo_cfg_entry_point": "PPO",
+    "rlopt_sac_cfg_entry_point": "SAC",
+    "rlopt_ipmd_cfg_entry_point": "IPMD",
+    "rlopt_ipmd_sr_cfg_entry_point": "IPMD_SR",
+    "rlopt_ipmd_bilinear_cfg_entry_point": "IPMD_BILINEAR",
+    "rlopt_gail_cfg_entry_point": "GAIL",
+    "rlopt_amp_cfg_entry_point": "AMP",
+    "rlopt_ase_cfg_entry_point": "ASE",
 }
 
 
@@ -235,20 +243,24 @@ def resolve_agent_cfg_entry_point(
     try:
         spec = gym.spec(task_id)
     except Exception as exc:
-        logger.warning("Could not resolve task '%s' from registry: %s", task_id, exc)
-        return agent_entry_point
+        msg = f"Could not resolve task '{task_id}' from registry."
+        raise ValueError(msg) from exc
+
     if spec.kwargs.get(algo_entry_point) is not None:
-        if algo_entry_point != agent_entry_point:
-            print(f"[INFO] Using agent config entry point: {algo_entry_point}")
+        print(f"[INFO] Using agent config entry point: {algo_entry_point}")
         return algo_entry_point
-    if algorithm != "PPO":
-        logger.warning(
-            "No algorithm-specific agent config for '%s' (expected '%s'); using '%s'.",
-            task_id,
-            algo_entry_point,
-            agent_entry_point,
-        )
-    return agent_entry_point
+
+    supported_algorithms = sorted(
+        ENTRY_POINT_ALGORITHM_MAP[key]
+        for key in ENTRY_POINT_ALGORITHM_MAP
+        if spec.kwargs.get(key) is not None
+    )
+    msg = (
+        "Unsupported task/algo combination: "
+        f"task '{task_id}' does not expose an RLOpt config for '{algorithm}'. "
+        f"Supported RLOpt algorithms for this task: {supported_algorithms}."
+    )
+    raise ValueError(msg)
 
 
 args_cli.agent = resolve_agent_cfg_entry_point(
@@ -262,6 +274,10 @@ def main(
     agent_cfg: RLOptConfig,
 ):
     """Train with stable-baselines agent."""
+    sync_input_keys = getattr(agent_cfg, "sync_input_keys", None)
+    if callable(sync_input_keys):
+        sync_input_keys()
+
     # randomly sample a seed if seed = -1
     if args_cli.seed == -1:
         args_cli.seed = random.randint(0, 10000)
@@ -361,6 +377,19 @@ def main(
         env=env,
         config=agent_cfg,  # type: ignore
     )
+
+    if args_cli.checkpoint is not None:
+        checkpoint_path = os.path.abspath(args_cli.checkpoint)
+        print(f"[INFO] Loading checkpoint: {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if isinstance(checkpoint, dict) and "actor_critic" in checkpoint:
+            agent.load(checkpoint_path)
+        else:
+            print(
+                "[WARNING] Checkpoint does not include full ASE/GAIL state; "
+                "loading policy/value optimizer state only."
+            )
+            agent.load_model(checkpoint_path)
 
     # run training
     agent.train()

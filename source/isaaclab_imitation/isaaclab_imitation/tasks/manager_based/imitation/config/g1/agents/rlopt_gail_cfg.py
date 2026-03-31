@@ -2,11 +2,37 @@ from isaaclab.utils import configclass
 
 from rlopt.agent import GAILRLOptConfig
 
-from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
-    G1_POLICY_OBS_KEYS,
-    G1_REWARD_OBS_KEYS,
-    G1_VALUE_OBS_KEYS,
-)
+
+VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
+    ("policy", "reference_motion"),
+    ("policy", "reference_anchor_ori_b"),
+    ("policy", "base_ang_vel"),
+    ("policy", "joint_pos_rel"),
+    ("policy", "joint_vel_rel"),
+    ("policy", "last_action"),
+]
+
+VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
+    ("critic", "reference_motion"),
+    ("critic", "reference_anchor_pos_b"),
+    ("critic", "reference_anchor_ori_b"),
+    ("critic", "body_pos"),
+    ("critic", "body_ori"),
+    ("critic", "base_lin_vel"),
+    ("critic", "base_ang_vel"),
+    ("critic", "joint_pos_rel"),
+    ("critic", "joint_vel_rel"),
+    ("critic", "last_action"),
+]
+
+REFERENCE_INPUT_KEYS: list[tuple[str, str]] = [
+    ("reference", "joint_pos"),
+    ("reference", "joint_vel"),
+    ("reference", "root_pos"),
+    ("reference", "root_quat"),
+    ("reference", "root_lin_vel"),
+    ("reference", "root_ang_vel"),
+]
 
 
 @configclass
@@ -21,9 +47,9 @@ class G1ImitationRLOptGAILConfig(GAILRLOptConfig):
             "Value function configuration must be provided."
         )
 
-        self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
-        self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
-        self.gail.discriminator_input_keys = list(G1_REWARD_OBS_KEYS)
+        self.policy.input_keys = list(VANILLA_POLICY_INPUT_KEYS)
+        self.value_function.input_keys = list(VANILLA_CRITIC_INPUT_KEYS)
+        self.gail.discriminator_input_keys = list(REFERENCE_INPUT_KEYS)
 
         self.collector.init_random_frames = 0
         self.collector.frames_per_batch = 24

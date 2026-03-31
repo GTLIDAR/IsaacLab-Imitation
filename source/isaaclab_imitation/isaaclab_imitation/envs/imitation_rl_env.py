@@ -1746,6 +1746,124 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             global_indices.to(self.device),
         )
 
+    def _get_observation_term_cfg(self, group_name: str, term_name: str) -> Any | None:
+        """Resolve the effective observation-term config from the active manager."""
+        observation_manager = getattr(self, "observation_manager", None)
+        if observation_manager is None:
+            return None
+        term_names = observation_manager.active_terms.get(group_name)
+        if term_names is None or term_name not in term_names:
+            return None
+        term_index = term_names.index(term_name)
+        return observation_manager._group_obs_term_cfgs[group_name][term_index]
+
+    def _reference_local_steps_from_global_indices(
+        self,
+        env_ids: torch.Tensor,
+        global_indices: torch.Tensor,
+    ) -> torch.Tensor:
+        """Convert replay-buffer global indices back to local trajectory steps."""
+        tm = self.trajectory_manager
+        env_ids_tm = env_ids.to(device=tm._state_device, dtype=torch.long)
+        global_indices_tm = global_indices.to(device=tm._state_device, dtype=torch.long)
+        traj_ranks = tm.env_traj_rank[env_ids_tm]
+        local_steps = global_indices_tm - tm._start[traj_ranks]
+        return local_steps.to(device=self.device, dtype=torch.long)
+
+    def _sample_reference_history_slice(
+        self,
+        env_ids: torch.Tensor,
+        local_steps: torch.Tensor,
+        history_length: int,
+    ) -> TensorDict:
+        """Sample oldest-to-newest reference history ending at each requested step."""
+        tm = self.trajectory_manager
+        env_ids_tm = env_ids.to(device=tm._state_device, dtype=torch.long)
+        local_steps_tm = local_steps.to(device=tm._state_device, dtype=torch.long)
+        history_offsets = torch.arange(
+            history_length,
+            device=tm._state_device,
+            dtype=torch.long,
+        )
+        history_steps = local_steps_tm.unsqueeze(1) - (history_length - 1 - history_offsets)
+        history_steps = history_steps.clamp(min=0)
+        history_reference = tm.sample_slice(
+            batch_size=history_length,
+            env_ids=env_ids_tm,
+            start_steps=history_steps,
+            mode="independent",
+        )
+        return history_reference.to(self.device)
+
+    def _reference_body_observations(
+        self,
+        reference: TensorDict,
+        env_ids: torch.Tensor,
+        *,
+        body_names: Sequence[str],
+        anchor_body_name: str,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build body position/orientation observations from sampled reference data."""
+        compiled = _get_mdp_compiled_module()
+        ref_body_pos_key = (
+            self._mdp_reference_body_pos_key
+            if self._mdp_reference_body_pos_key in reference.keys()
+            else ("xpos" if "xpos" in reference.keys() else "body_pos_w")
+        )
+        ref_body_quat_key = (
+            self._mdp_reference_body_quat_key
+            if self._mdp_reference_body_quat_key in reference.keys()
+            else ("xquat" if "xquat" in reference.keys() else "body_quat_w")
+        )
+        ref_body_source = reference.get(ref_body_pos_key)
+        ref_quat_source = reference.get(ref_body_quat_key)
+        if ref_body_source is None or ref_quat_source is None:
+            raise KeyError(
+                "Reference batch is missing body pose fields required for body observations."
+            )
+
+        ref_body_ids = self._get_reference_body_ids_fast(tuple(body_names))
+        ref_anchor_ids = self._get_reference_body_ids_fast((anchor_body_name,))
+        body_dim = ref_body_source.ndim - 2
+
+        ref_body_pos = ref_body_source.index_select(body_dim, ref_body_ids)
+        ref_body_quat = ref_quat_source.index_select(body_dim, ref_body_ids)
+        ref_anchor_pos = ref_body_source.index_select(body_dim, ref_anchor_ids).squeeze(body_dim)
+        ref_anchor_quat = ref_quat_source.index_select(body_dim, ref_anchor_ids).squeeze(body_dim)
+
+        leading_shape = tuple(int(dim) for dim in ref_anchor_pos.shape[:-1])
+        flat_count = int(np.prod(leading_shape)) if len(leading_shape) > 0 else 1
+        repeat_factor = int(np.prod(leading_shape[1:])) if len(leading_shape) > 1 else 1
+        flat_env_ids = (
+            env_ids[:, None].expand(-1, repeat_factor).reshape(-1)
+            if repeat_factor > 1
+            else env_ids
+        ).to(device=self.device, dtype=torch.long)
+
+        body_pos_w, body_quat_w = self._transform_reference_pose_to_world(
+            ref_body_pos.reshape(flat_count, ref_body_pos.shape[-2], 3),
+            ref_body_quat.reshape(flat_count, ref_body_quat.shape[-2], 4),
+            env_ids=flat_env_ids,
+        )
+        anchor_pos_w, anchor_quat_w_opt = self._transform_reference_pose_to_world(
+            ref_anchor_pos.reshape(flat_count, 3),
+            ref_anchor_quat.reshape(flat_count, 4),
+            env_ids=flat_env_ids,
+        )
+        if anchor_quat_w_opt is None:
+            raise RuntimeError(
+                "Failed to transform reference anchor quaternion for body observations."
+            )
+        body_pos_b, body_ori_b = compiled.body_pose_in_anchor_frame(
+            anchor_pos_w,
+            anchor_quat_w_opt,
+            body_pos_w,
+            body_quat_w,
+        )
+        body_pos_obs = body_pos_b.reshape(*leading_shape, -1)
+        body_ori_obs = compiled.quat_to_rot6d_flat(body_ori_b).reshape(*leading_shape, -1)
+        return body_pos_obs, body_ori_obs
+
     def _reference_obs_by_term(
         self,
         reference: TensorDict,
@@ -1793,6 +1911,16 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         root_lin_vel = math_utils.quat_apply(align_quat, root_lin_vel_ref)
         root_ang_vel = math_utils.quat_apply(align_quat, root_ang_vel_ref)
         robot = getattr(self, "robot", None)
+        gravity_vec = getattr(getattr(robot, "data", None), "GRAVITY_VEC_W", None)
+        if isinstance(gravity_vec, torch.Tensor):
+            projected_gravity = math_utils.quat_apply_inverse(
+                root_quat_w,
+                gravity_vec.index_select(0, env_ids).to(dtype=root_quat_w.dtype),
+            )
+        else:
+            gravity = torch.zeros_like(root_lin_vel)
+            gravity[:, 2] = -1.0
+            projected_gravity = math_utils.quat_apply_inverse(root_quat_w, gravity)
         if robot is None:
             default_joint_pos = self._expert_default_joint_pos.index_select(0, env_ids)
             default_joint_vel = self._expert_default_joint_vel.index_select(0, env_ids)
@@ -1832,9 +1960,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             )
 
         return {
-            # Expert/reference batches reuse the live agent latent command for the
-            # sampled logical env ids instead of drawing a separate latent.
-            "latent_command": self.get_agent_latent_command(env_ids),
             "joint_pos": joint_pos_ref,
             "joint_vel": joint_vel_ref,
             "joint_pos_rel": joint_pos_ref - default_joint_pos,
@@ -1844,6 +1969,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             "root_lin_vel": root_lin_vel,
             "root_ang_vel": root_ang_vel,
             "reference_motion": torch.cat([joint_pos_ref, joint_vel_ref], dim=-1),
+            "projected_gravity": projected_gravity,
             # Expert-state observations treat robot and reference as aligned.
             "reference_anchor_pos_b": zero_anchor_pos,
             "reference_anchor_ori_b": identity_rot6d,
@@ -1854,6 +1980,37 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             "base_ang_vel": root_ang_vel,
         }
 
+    def get_current_reference_observations(
+        self,
+        required_keys: Sequence[NestedKey],
+        env_ids: torch.Tensor | None = None,
+    ) -> TensorDict | None:
+        """Map the live current reference frame to the requested observation keys."""
+        if self.current_reference is None:
+            return None
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device, dtype=torch.long)
+        else:
+            env_ids = env_ids.to(device=self.device, dtype=torch.long)
+
+        reference = self.current_reference[env_ids]
+        current_local_steps = self.trajectory_manager.env_step[
+            env_ids.to(device=self.trajectory_manager._state_device, dtype=torch.long)
+        ].to(device=self.device, dtype=torch.long)
+        mapped_current = self._reference_to_requested_obs(
+            reference,
+            env_ids,
+            required_keys,
+            local_steps=current_local_steps,
+        )
+        if mapped_current is None:
+            return None
+        return TensorDict(
+            mapped_current,
+            batch_size=[int(env_ids.shape[0])],
+            device=self.device,
+        )
+
     def _reference_to_requested_obs(
         self,
         reference: TensorDict,
@@ -1861,15 +2018,183 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         obs_keys: Sequence[NestedKey],
         *,
         prefix: tuple[str, ...] = (),
+        local_steps: torch.Tensor | None = None,
     ) -> dict[NestedKey, torch.Tensor] | None:
         """Map requested nested observation keys to tensors from sampled reference."""
         term_values = self._reference_obs_by_term(reference, env_ids, prefix=prefix)
         mapped_values: dict[NestedKey, torch.Tensor] = {}
         unknown_terms: list[str] = []
+        style_keys: list[NestedKey] = []
+        style_history_terms: dict[NestedKey, tuple[int, bool]] = {}
 
         for obs_key in obs_keys:
             key_tuple = self._normalize_nested_key(obs_key)
+            group_name = key_tuple[0] if len(key_tuple) > 1 else ""
+            if group_name != "style":
+                continue
+            term_cfg = self._get_observation_term_cfg(group_name, key_tuple[-1])
+            if term_cfg is None:
+                unknown_terms.append(key_tuple[-1])
+                continue
+            style_keys.append(obs_key)
+            style_history_terms[obs_key] = (
+                max(1, int(getattr(term_cfg, "history_length", 0))),
+                bool(getattr(term_cfg, "flatten_history_dim", True)),
+            )
+
+        style_history_reference: TensorDict | None = None
+        style_body_cache: dict[tuple[tuple[str, ...], str], tuple[torch.Tensor, torch.Tensor]] = {}
+        style_shared_cache: dict[str, torch.Tensor] = {}
+        if len(style_keys) > 0:
+            if local_steps is None:
+                logger.warning(
+                    "Reference mapper received style-history requests without local steps."
+                )
+                return None
+            history_length = max(
+                history_length for history_length, _ in style_history_terms.values()
+            )
+            style_history_reference = self._sample_reference_history_slice(
+                env_ids,
+                local_steps,
+                history_length,
+            )
+            history_root_quat = style_history_reference.get("root_quat")
+            history_joint_pos = style_history_reference.get("joint_pos")
+            history_joint_vel = style_history_reference.get("joint_vel")
+            history_root_lin_vel = style_history_reference.get("root_lin_vel")
+            history_root_ang_vel = style_history_reference.get("root_ang_vel")
+            if (
+                history_root_quat is None
+                or history_joint_pos is None
+                or history_joint_vel is None
+                or history_root_lin_vel is None
+                or history_root_ang_vel is None
+            ):
+                raise KeyError(
+                    "Reference history slice is missing kinematic fields required for style observations."
+                )
+            hist_len = int(history_joint_pos.shape[1])
+            flat_env_ids = env_ids[:, None].expand(-1, hist_len).reshape(-1)
+            robot = getattr(self, "robot", None)
+            gravity_vec = getattr(getattr(robot, "data", None), "GRAVITY_VEC_W", None)
+            if robot is None:
+                default_joint_pos = self._expert_default_joint_pos.index_select(
+                    0, flat_env_ids
+                )
+                default_joint_vel = self._expert_default_joint_vel.index_select(
+                    0, flat_env_ids
+                )
+            else:
+                default_joint_pos = robot.data.default_joint_pos.index_select(
+                    0, flat_env_ids
+                )
+                default_joint_vel = robot.data.default_joint_vel.index_select(
+                    0, flat_env_ids
+                )
+            if isinstance(gravity_vec, torch.Tensor):
+                projected_gravity = math_utils.quat_apply_inverse(
+                    history_root_quat.reshape(-1, 4),
+                    gravity_vec.index_select(0, flat_env_ids).to(
+                        dtype=history_root_quat.dtype
+                    ),
+                ).reshape(env_ids.shape[0], hist_len, -1)
+            else:
+                gravity = torch.zeros_like(history_root_lin_vel)
+                gravity[..., 2] = -1.0
+                projected_gravity = math_utils.quat_apply_inverse(
+                    history_root_quat.reshape(-1, 4),
+                    gravity.reshape(-1, 3),
+                ).reshape(env_ids.shape[0], hist_len, -1)
+            style_shared_cache["projected_gravity"] = projected_gravity
+            style_shared_cache["joint_pos_rel"] = (
+                history_joint_pos.reshape(hist_len * env_ids.shape[0], -1)
+                - default_joint_pos
+            ).reshape(env_ids.shape[0], hist_len, -1)
+            style_shared_cache["joint_vel_rel"] = (
+                history_joint_vel.reshape(hist_len * env_ids.shape[0], -1)
+                - default_joint_vel
+            ).reshape(env_ids.shape[0], hist_len, -1)
+            style_shared_cache["base_lin_vel"] = history_root_lin_vel
+            style_shared_cache["base_ang_vel"] = history_root_ang_vel
+
+        for obs_key in obs_keys:
+            key_tuple = self._normalize_nested_key(obs_key)
+            group_name = key_tuple[0] if len(key_tuple) > 1 else ""
             term_name = key_tuple[-1]
+            if group_name == "style":
+                term_cfg = self._get_observation_term_cfg(group_name, term_name)
+                if term_cfg is None or style_history_reference is None:
+                    unknown_terms.append(term_name)
+                    continue
+                term_history = style_shared_cache.get(term_name)
+                if term_history is None and term_name in {"body_pos", "body_ori"}:
+                    asset_cfg = term_cfg.params.get("asset_cfg")
+                    body_names = getattr(asset_cfg, "body_names", None)
+                    if isinstance(body_names, str):
+                        body_names = (body_names,)
+                    elif isinstance(body_names, list):
+                        body_names = tuple(body_names)
+                    elif isinstance(body_names, tuple):
+                        pass
+                    else:
+                        body_names = tuple(self.reference_body_names)
+                    anchor_body_name = str(
+                        term_cfg.params.get("anchor_body_name", "torso_link")
+                    )
+                    cache_key = (tuple(body_names), anchor_body_name)
+                    cached_pair = style_body_cache.get(cache_key)
+                    if cached_pair is None:
+                        cached_pair = self._reference_body_observations(
+                            style_history_reference,
+                            env_ids,
+                            body_names=cache_key[0],
+                            anchor_body_name=anchor_body_name,
+                        )
+                        style_body_cache[cache_key] = cached_pair
+                    term_history = (
+                        cached_pair[0] if term_name == "body_pos" else cached_pair[1]
+                    )
+                if term_history is None:
+                    unknown_terms.append(term_name)
+                    continue
+                history_length, flatten_history_dim = style_history_terms[obs_key]
+                value_history = term_history[:, -history_length:, :]
+                mapped_values[obs_key] = (
+                    value_history.reshape(value_history.shape[0], -1)
+                    if flatten_history_dim
+                    else value_history
+                )
+                continue
+            term_cfg = (
+                self._get_observation_term_cfg(group_name, term_name)
+                if len(key_tuple) > 1
+                else None
+            )
+            if term_name in {"body_pos", "body_ori"} and term_cfg is not None:
+                asset_cfg = term_cfg.params.get("asset_cfg")
+                body_names = getattr(asset_cfg, "body_names", None)
+                if isinstance(body_names, str):
+                    body_names = (body_names,)
+                elif isinstance(body_names, list):
+                    body_names = tuple(body_names)
+                elif isinstance(body_names, tuple):
+                    pass
+                else:
+                    body_names = tuple(self.reference_body_names)
+                anchor_body_name = str(
+                    term_cfg.params.get("anchor_body_name", "torso_link")
+                )
+                body_pos_obs, body_ori_obs = self._reference_body_observations(
+                    reference,
+                    env_ids,
+                    body_names=tuple(body_names),
+                    anchor_body_name=anchor_body_name,
+                )
+                mapped_values[obs_key] = (
+                    body_pos_obs if term_name == "body_pos" else body_ori_obs
+                )
+                continue
             value = term_values.get(term_name)
             if value is None:
                 unknown_terms.append(term_name)
@@ -1932,11 +2257,20 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             )
 
         if len(current_obs_keys) > 0:
-            assert current_reference is not None and current_env_ids is not None
+            assert (
+                current_reference is not None
+                and current_env_ids is not None
+                and current_global_indices is not None
+            )
+            current_local_steps = self._reference_local_steps_from_global_indices(
+                current_env_ids,
+                current_global_indices,
+            )
             mapped_current = self._reference_to_requested_obs(
                 current_reference,
                 current_env_ids,
                 current_obs_keys,
+                local_steps=current_local_steps,
             )
             if mapped_current is None:
                 return None

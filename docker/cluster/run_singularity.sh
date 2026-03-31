@@ -41,21 +41,25 @@ build_g1_preflight_cmd() {
     local manifest_path="$2"
     local expected_motion_count="$3"
     local repo_id="$4"
+    local manifest_refresh_policy="$5"
     local quoted_data_root=""
     local quoted_manifest_path=""
     local quoted_expected_motion_count=""
     local quoted_repo_id=""
+    local quoted_manifest_refresh_policy=""
 
     printf -v quoted_data_root '%q' "$data_root"
     printf -v quoted_manifest_path '%q' "$manifest_path"
     printf -v quoted_expected_motion_count '%q' "$expected_motion_count"
     printf -v quoted_repo_id '%q' "$repo_id"
+    printf -v quoted_manifest_refresh_policy '%q' "$manifest_refresh_policy"
 
     cat <<EOF
 cluster_g1_data_root=${quoted_data_root}
 cluster_g1_manifest_path=${quoted_manifest_path}
 cluster_g1_expected_motion_count=${quoted_expected_motion_count}
 cluster_g1_repo_id=${quoted_repo_id}
+cluster_g1_manifest_refresh_policy=${quoted_manifest_refresh_policy}
 cluster_g1_npz_dir="\${cluster_g1_data_root}/npz/g1"
 cluster_g1_npz_count=0
 
@@ -78,10 +82,43 @@ if [ ! -d "\${cluster_g1_npz_dir}" ]; then
 fi
 
 mkdir -p "\$(dirname "\${cluster_g1_manifest_path}")"
-/isaac-sim/python.sh scripts/write_lafan1_npz_manifest.py \\
-    --npz_dir "\${cluster_g1_npz_dir}" \\
-    --manifest_path "\${cluster_g1_manifest_path}" \\
-    --recursive
+cluster_g1_refresh_manifest=0
+case "\${cluster_g1_manifest_refresh_policy}" in
+    always)
+        echo "[INFO] G1 manifest refresh policy is 'always'; generating '\${cluster_g1_manifest_path}'."
+        cluster_g1_refresh_manifest=1
+        ;;
+    never)
+        echo "[INFO] G1 manifest refresh policy is 'never'; leaving '\${cluster_g1_manifest_path}' untouched."
+        ;;
+    auto)
+        if [ ! -f "\${cluster_g1_manifest_path}" ]; then
+            echo "[INFO] G1 manifest missing; generating '\${cluster_g1_manifest_path}'."
+            cluster_g1_refresh_manifest=1
+        elif find "\${cluster_g1_npz_dir}" -type f -name '*.npz' -newer "\${cluster_g1_manifest_path}" -print -quit | grep -q .; then
+            echo "[INFO] G1 manifest is older than the NPZ tree; regenerating '\${cluster_g1_manifest_path}'."
+            cluster_g1_refresh_manifest=1
+        else
+            echo "[INFO] Reusing existing G1 manifest: '\${cluster_g1_manifest_path}'."
+        fi
+        ;;
+    *)
+        echo "[ERROR] Unsupported CLUSTER_G1_MANIFEST_REFRESH_POLICY='\${cluster_g1_manifest_refresh_policy}'. Use one of: auto, never, always." >&2
+        exit 1
+        ;;
+esac
+
+if [ "\${cluster_g1_manifest_refresh_policy}" = "never" ] && [ ! -f "\${cluster_g1_manifest_path}" ]; then
+    echo "[ERROR] CLUSTER_G1_MANIFEST_REFRESH_POLICY=never but manifest does not exist: \${cluster_g1_manifest_path}" >&2
+    exit 1
+fi
+
+if [ "\${cluster_g1_refresh_manifest}" = "1" ]; then
+    /isaac-sim/python.sh scripts/write_lafan1_npz_manifest.py \\
+        --npz_dir "\${cluster_g1_npz_dir}" \\
+        --manifest_path "\${cluster_g1_manifest_path}" \\
+        --recursive
+fi
 
 cluster_g1_npz_count=\$(find "\${cluster_g1_npz_dir}" -type f -name '*.npz' | wc -l | tr -d '[:space:]')
 if [ "\${cluster_g1_npz_count}" -lt "\${cluster_g1_expected_motion_count}" ]; then
@@ -123,6 +160,7 @@ cluster_g1_expected_motion_count="${CLUSTER_G1_EXPECTED_MOTION_COUNT:-40}"
 cluster_g1_data_root="${CLUSTER_G1_DATA_ROOT:-${CLUSTER_DATA_DIR}/lafan1}"
 cluster_g1_repo_id="${CLUSTER_G1_REPO_ID:-GeorgiaTech/g1_lafan1_50hz}"
 cluster_g1_manifest_path="${CLUSTER_G1_MANIFEST_PATH:-${cluster_g1_data_root}/manifests/g1_lafan1_manifest.json}"
+cluster_g1_manifest_refresh_policy="${CLUSTER_G1_MANIFEST_REFRESH_POLICY:-auto}"
 cluster_hf_token="${CLUSTER_HF_TOKEN:-}"
 cluster_wandb_api_key="${CLUSTER_WANDB_API_KEY:-${WANDB_API_KEY:-}}"
 
@@ -198,7 +236,7 @@ apptainer overlay create --size 20240 $CLUSTER_ISAACLAB_DIR/$dir_name.img
 # Isaac Lab directory to the compute node and remote the symbolic link to isaac-sim
 preflight_cmd=""
 if [ "${auto_setup_g1_data}" = "1" ]; then
-    preflight_cmd="$(build_g1_preflight_cmd "${cluster_g1_data_root}" "${cluster_g1_manifest_path}" "${cluster_g1_expected_motion_count}" "${cluster_g1_repo_id}")"
+    preflight_cmd="$(build_g1_preflight_cmd "${cluster_g1_data_root}" "${cluster_g1_manifest_path}" "${cluster_g1_expected_motion_count}" "${cluster_g1_repo_id}" "${cluster_g1_manifest_refresh_policy}")"
 fi
 printf -v workload_cmd '%q ' /isaac-sim/python.sh "${CLUSTER_PYTHON_EXECUTABLE}" "${@:3}"
 container_entry_cmd="export ACCEPT_EULA=${ACCEPT_EULA:-Y} && export PRIVACY_CONSENT=${PRIVACY_CONSENT:-Y} && export OMNI_KIT_ACCEPT_EULA=YES && export HOME=${container_home} && export XDG_CACHE_HOME=${container_home}/.cache && export XDG_DATA_HOME=${container_home}/.local/share && export ISAACLAB_WORKSPACE_PATH=/workspace/isaaclab/project && export ISAACLAB_PATH=/workspace/isaaclab/project/IsaacLab && export ISAACSIM_PATH=/workspace/isaaclab/project/IsaacLab/_isaac_sim && export ISAACLAB_DATA_DIR=/data && export CLUSTER_DATA_DIR=${CLUSTER_DATA_DIR} && export PYTHONPATH=${container_pythonpath} && export TRITON_CACHE_DIR=${container_triton_cache_dir} && export TORCHINDUCTOR_CACHE_DIR=${container_torchinductor_cache_dir} && export RL_WARNINGS=${RL_WARNINGS:-False} && if [ \"${allow_torch_compile_debug}\" != \"1\" ]; then unset TORCH_LOGS; export TORCHDYNAMO_VERBOSE=0; export TORCH_COMPILE_DEBUG=0; fi && cd /workspace/isaaclab/project"

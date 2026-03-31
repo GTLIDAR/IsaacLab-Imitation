@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -112,8 +113,30 @@ def build_lafan1_loader_kwargs(
     }
 
 
-def dataset_path_from_entries(entries: list[dict[str, Any]]) -> str:
-    """Create a stable cache path tied to the manifest entries."""
-    signature = json.dumps(entries, sort_keys=True, separators=(",", ":"))
+def _sanitize_cache_name(value: str) -> str:
+    name = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
+    return name or "manifest"
+
+
+def dataset_path_from_entries(
+    entries: list[dict[str, Any]],
+    *,
+    manifest_path: str | Path | None = None,
+) -> str:
+    """Create a stable cache path tied to the manifest identity and entries."""
+    resolved_manifest_path = None
+    manifest_name = "lafan1"
+    if manifest_path is not None:
+        resolved_manifest_path = str(Path(manifest_path).expanduser().resolve())
+        manifest_name = _sanitize_cache_name(Path(resolved_manifest_path).stem)
+
+    signature = json.dumps(
+        {
+            "manifest_path": resolved_manifest_path,
+            "entries": entries,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     digest = hashlib.sha1(signature.encode("utf-8")).hexdigest()[:12]
-    return f"/tmp/iltools_g1_lafan1_tracking_{digest}"
+    return f"/tmp/iltools_g1_lafan1_tracking_{manifest_name}_{digest}"

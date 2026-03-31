@@ -1,16 +1,89 @@
 from isaaclab.utils import configclass
 
 from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig
-from isaaclab_imitation.tasks.manager_based.imitation.config.g1.imitation_g1_env_cfg import (
-    G1_REWARD_OBS_KEYS,
-    G1_POLICY_OBS_KEYS,
-    G1_VALUE_OBS_KEYS,
-)
+
+
+VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
+    ("policy", "reference_motion"),
+    ("policy", "reference_anchor_ori_b"),
+    ("policy", "base_ang_vel"),
+    ("policy", "joint_pos_rel"),
+    ("policy", "joint_vel_rel"),
+    ("policy", "last_action"),
+]
+
+VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
+    ("critic", "reference_motion"),
+    ("critic", "reference_anchor_pos_b"),
+    ("critic", "reference_anchor_ori_b"),
+    ("critic", "body_pos"),
+    ("critic", "body_ori"),
+    ("critic", "base_lin_vel"),
+    ("critic", "base_ang_vel"),
+    ("critic", "joint_pos_rel"),
+    ("critic", "joint_vel_rel"),
+    ("critic", "last_action"),
+]
+
+LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
+    ("policy", "latent_command"),
+    ("policy", "projected_gravity"),
+    ("policy", "base_lin_vel"),
+    ("policy", "base_ang_vel"),
+    ("policy", "joint_pos_rel"),
+    ("policy", "joint_vel_rel"),
+    ("policy", "last_action"),
+]
+
+LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
+    ("critic", "latent_command"),
+    ("critic", "reference_motion"),
+    ("critic", "reference_anchor_pos_b"),
+    ("critic", "reference_anchor_ori_b"),
+    ("critic", "body_pos"),
+    ("critic", "body_ori"),
+    ("critic", "projected_gravity"),
+    ("critic", "base_lin_vel"),
+    ("critic", "base_ang_vel"),
+    ("critic", "joint_pos_rel"),
+    ("critic", "joint_vel_rel"),
+    ("critic", "joint_pos"),
+    ("critic", "joint_vel"),
+    ("critic", "last_action"),
+]
+
+REFERENCE_INPUT_KEYS: list[tuple[str, str]] = [
+    ("reference", "joint_pos"),
+    ("reference", "joint_vel"),
+    ("reference", "root_pos"),
+    ("reference", "root_quat"),
+    ("reference", "root_lin_vel"),
+    ("reference", "root_ang_vel"),
+]
 
 
 @configclass
-class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
-    """RLOpt IPMD configuration for G1 imitation."""
+class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
+    """Shared RLOpt IPMD configuration for G1 imitation."""
+
+    _default_use_latent_command: bool = False
+
+    def sync_input_keys(self) -> None:
+        use_latent_command = bool(self.ipmd.use_latent_command)
+        self.policy.input_keys = (
+            list(LATENT_POLICY_INPUT_KEYS)
+            if use_latent_command
+            else list(VANILLA_POLICY_INPUT_KEYS)
+        )
+        if self.value_function is not None:
+            self.value_function.input_keys = (
+                list(LATENT_CRITIC_INPUT_KEYS)
+                if use_latent_command
+                else list(VANILLA_CRITIC_INPUT_KEYS)
+            )
+        self.ipmd.reward_input_keys = list(REFERENCE_INPUT_KEYS)
+        self.ipmd.latent_key = ("policy", "latent_command")
+        self.ipmd.use_latent_command = use_latent_command
 
     def __post_init__(self):
         super().__post_init__()
@@ -20,9 +93,11 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
             "Value function configuration must be provided."
         )
 
-        self.policy.input_keys = list(G1_POLICY_OBS_KEYS)
-        self.value_function.input_keys = list(G1_VALUE_OBS_KEYS)
-        self.ipmd.reward_input_keys = list(G1_REWARD_OBS_KEYS)
+        self.ipmd.use_latent_command = bool(self._default_use_latent_command)
+        self.ipmd.command_source = (
+            "reference_posterior" if self._default_use_latent_command else "random"
+        )
+        self.sync_input_keys()
 
         # More initial exploration to improve policy-state coverage for inverse reward.
         self.collector.init_random_frames = 0
@@ -56,7 +131,6 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.save_interval = 500
 
         self.ipmd.latent_dim = 64
-        self.ipmd.latent_key = ("policy", "latent_command")
         self.ipmd.latent_steps_min = 30
         self.ipmd.latent_steps_max = 120
         self.ipmd.latent_vmf_kappa = 1.0
@@ -76,7 +150,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # Weight is applied at advantage level (mi_adv * mi_reward_weight added to
         # main advantages), so 0.5 is appropriate for a [0, 1] reward signal.
         self.ipmd.mi_hypersphere_reward_shift = True
-        self.ipmd.mi_reward_weight = 0.5
+        self.ipmd.mi_reward_weight = 0.0
 
         # MI critic (separate value head for the MI reward stream, like ASE)
         self.ipmd.mi_critic_hidden_dims = [256, 256]
@@ -87,7 +161,7 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         # Diversity bonus and latent uniformity
         self.ipmd.diversity_bonus_coeff = 0.05
         self.ipmd.diversity_target = 1.0
-        self.ipmd.latent_uniformity_coeff = 0.005
+        self.ipmd.latent_uniformity_coeff = 0.00
         self.ipmd.latent_uniformity_temperature = 2.0
 
         self.ipmd.reward_input_type = "s"
@@ -100,7 +174,21 @@ class G1ImitationRLOptIPMDConfig(IPMDRLOptConfig):
         self.ipmd.reward_output_scale = 0.25
         self.ipmd.estimated_reward_clamp_min = -0.25
         self.ipmd.estimated_reward_clamp_max = 0.25
-        self.ipmd.est_reward_weight = 0.3
+        self.ipmd.est_reward_weight = 0.0
         self.collector.no_cuda_sync = True
         self.log_level = "critical"
         self.ipmd.reward_l2_coeff = 0.5
+
+
+@configclass
+class G1ImitationRLOptIPMDConfig(_G1ImitationRLOptIPMDBaseConfig):
+    """Vanilla RLOpt IPMD configuration for G1 imitation."""
+
+    _default_use_latent_command: bool = False
+
+
+@configclass
+class G1ImitationLatentRLOptIPMDConfig(_G1ImitationRLOptIPMDBaseConfig):
+    """Latent-conditioned RLOpt IPMD configuration for G1 imitation."""
+
+    _default_use_latent_command: bool = True

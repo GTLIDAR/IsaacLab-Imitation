@@ -18,8 +18,9 @@ RLOpt and RSL-RL.
 
 Registered task IDs currently include:
 
-- `Isaac-Imitation-G1-LafanTrack-v0`
 - `Isaac-Imitation-G1-v0`
+- `Isaac-Imitation-G1-Latent-v0`
+- `Isaac-Imitation-G1-LafanTrack-v0` (legacy alias of `Isaac-Imitation-G1-v0`)
 
 ## Workspace setup
 
@@ -103,19 +104,19 @@ Train a G1 imitation policy with RLOpt IPMD:
 
 ```bash
 python scripts/rlopt/train.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-Latent-v0 \
     --algo IPMD \
     --headless \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
 For imitation-based RL, the recommended starting point in this repo is RLOpt IPMD on
-`Isaac-Imitation-G1-LafanTrack-v0`. If you want a smaller single-motion setup for the
+`Isaac-Imitation-G1-Latent-v0`. If you want a smaller single-motion setup for the
 retargeted Unitree `dance102` clip, use:
 
 ```bash
 python scripts/rlopt/train.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-Latent-v0 \
     --algo IPMD \
     --headless \
     env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json
@@ -125,7 +126,7 @@ Train with RLOpt PPO:
 
 ```bash
 python scripts/rlopt/train.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-v0 \
     --algo PPO \
     --headless \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
@@ -135,12 +136,33 @@ Train ASE with the full local LAFAN1 G1 manifest:
 
 ```bash
 python scripts/rlopt/train.py \
-    --task Isaac-Imitation-G1-v0 \
+    --task Isaac-Imitation-G1-Latent-v0 \
     --num_envs 4096 \
     --algo ASE \
     --headless \
     --video \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
+```
+
+Train latent-conditioned IPMD with the same manifest:
+
+```bash
+python scripts/rlopt/train.py \
+    --task Isaac-Imitation-G1-Latent-v0 \
+    --algo IPMD \
+    --headless \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
+```
+
+To run IPMD on the vanilla tracking task instead, disable latent commands explicitly:
+
+```bash
+python scripts/rlopt/train.py \
+    --task Isaac-Imitation-G1-v0 \
+    --algo IPMD \
+    --headless \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json \
+    ipmd.use_latent_command=False
 ```
 
 If you want to reuse an existing cached Zarr dataset instead of rebuilding it on startup, add:
@@ -149,14 +171,20 @@ If you want to reuse an existing cached Zarr dataset instead of rebuilding it on
 env.refresh_zarr_dataset=False
 ```
 
+For manifest-driven G1 tasks, the cache path is derived from the resolved manifest path and contents, so LaFAN1 and
+Unitree manifests do not share the same Zarr dataset by default.
+
 Train with RSL-RL:
 
 ```bash
 python scripts/rsl_rl/train.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-v0 \
     --headless \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
+
+`Isaac-Imitation-G1-LafanTrack-v0` remains registered as a backward-compatible alias to
+`Isaac-Imitation-G1-v0`, but new commands should prefer `Isaac-Imitation-G1-v0`.
 
 Common flags:
 
@@ -334,7 +362,7 @@ Run a zero-action smoke test:
 
 ```bash
 python scripts/zero_agent.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-v0 \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
@@ -342,7 +370,7 @@ Run a random-action smoke test:
 
 ```bash
 python scripts/random_agent.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-v0 \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
@@ -350,7 +378,7 @@ Play back an RLOpt checkpoint:
 
 ```bash
 python scripts/rlopt/play.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-v0 \
     --checkpoint /absolute/path/to/checkpoint.pt \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
@@ -359,7 +387,7 @@ Replay all 40 local G1 LAFAN1 motions from the full manifest:
 
 ```bash
 python scripts/replay_reference.py \
-    --task Isaac-Imitation-G1-LafanTrack-v0 \
+    --task Isaac-Imitation-G1-v0 \
     --motion_manifest data/lafan1/manifests/g1_lafan1_manifest.json \
     --motion_refresh_dataset \
     --reset_schedule round_robin \
@@ -372,7 +400,9 @@ python scripts/replay_reference.py \
 Notes:
 
 - use `data/lafan1/manifests/g1_lafan1_manifest.json` to load the full local 40-motion set
-- the generic `Isaac-Imitation-G1-LafanTrack-v0` task now expects `env.lafan1_manifest_path=...`
+- `Isaac-Imitation-G1-v0` is the canonical vanilla tracking task and expects `env.lafan1_manifest_path=...`
+- `Isaac-Imitation-G1-Latent-v0` is the latent-conditioned variant for ASE or latent-enabled IPMD
+- `Isaac-Imitation-G1-LafanTrack-v0` remains available as a legacy alias for the vanilla task
 - `replay_reference.py` disables reward and termination terms by default, so long reference videos do not reset early
 - pass `--keep_terminations` or `--keep_rewards` if you explicitly want the old RL-style behavior during replay
 - `--num_envs 40` is the way to see all 40 loaded trajectories at once; using fewer environments still loads the manifest,
@@ -431,7 +461,9 @@ Cluster jobs submitted through `docker/cluster/cluster_interface.sh job ...` now
 running the user workload. The container-side preflight in `docker/cluster/run_singularity.sh` verifies that the G1 NPZ
 tree under `${CLUSTER_G1_DATA_ROOT:-${CLUSTER_DATA_DIR}/lafan1}` contains at least 40 motions. If the dataset is
 incomplete, it downloads the G1 NPZ dataset from Hugging Face with `scripts/setup_g1_lafan1_npz_dataset.py` and
-regenerates `g1_lafan1_manifest.json` with `scripts/write_lafan1_npz_manifest.py`.
+regenerates `g1_lafan1_manifest.json` with `scripts/write_lafan1_npz_manifest.py` only when the manifest is missing or
+older than the NPZ files. You can override that behavior with `CLUSTER_G1_MANIFEST_REFRESH_POLICY`:
+`auto` regenerates only when needed, `never` leaves the manifest untouched, and `always` regenerates on every job.
 
 Submitted jobs also append a default full-dataset override:
 
@@ -455,6 +487,7 @@ Relevant cluster env vars:
 - `CLUSTER_WANDB_API_KEY=...`: inline W&B API key override if you do not want to use a token file
 - `CLUSTER_APPEND_DEFAULT_G1_MANIFEST=1`: append the default full-manifest override to submitted jobs
 - `CLUSTER_G1_MANIFEST_PATH=${CLUSTER_G1_DATA_ROOT}/manifests/g1_lafan1_manifest.json`: override the default full-manifest job argument
+- `CLUSTER_G1_MANIFEST_REFRESH_POLICY=auto`: control whether cluster preflight regenerates the manifest (`never` is the right setting for a Unitree manifest you want to preserve)
 
 For private repos or authenticated Hugging Face access on the cluster, the recommended setup is:
 
