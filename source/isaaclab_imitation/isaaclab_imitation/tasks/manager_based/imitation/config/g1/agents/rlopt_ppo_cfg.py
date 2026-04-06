@@ -69,8 +69,8 @@ class G1ImitationRLOptPPOConfig(PPORLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 30000 * 4096 * 24
-        self.save_interval = 500
+        self.save_interval = 5_000_000   # samples
         self.compile.compile = False
         self.collector.no_cuda_sync = True
         self.trainer.progress_bar = True
-        self.trainer.log_interval = 4096 * 24 * 10
+        self.trainer.log_interval = 1_000_000  # samples

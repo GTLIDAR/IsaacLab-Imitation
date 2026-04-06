@@ -128,7 +128,7 @@ class _G1ImitationRLOptIPMDSRBaseConfig(IPMDSRRLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 500_000_000
-        self.save_interval = 500
+        self.save_interval = 5_000_000   # samples
 
         self.ipmd.latent_dim = 64
         self.ipmd.latent_steps_min = 30
@@ -141,6 +141,7 @@ class _G1ImitationRLOptIPMDSRBaseConfig(IPMDSRRLOptConfig):
         self.ipmd.bc_coef = 0.1
         self.compile.compile = False
         self.trainer.progress_bar = True
+        self.trainer.log_interval = 1_000_000  # samples
         self.ipmd.reward_output_scale = 1.0
         self.ipmd.estimated_reward_clamp_min = -1.0
         self.ipmd.estimated_reward_clamp_max = 1.0

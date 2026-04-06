@@ -56,8 +56,8 @@ parser.add_argument(
 parser.add_argument(
     "--log_interval",
     type=int,
-    default=100_000_000,
-    help="Log data every n timesteps.",
+    default=None,
+    help="Override metric logging cadence in environment steps.",
 )
 parser.add_argument(
     "--checkpoint",
@@ -80,7 +80,7 @@ parser.add_argument(
     dest="algorithm",
     type=str.upper,
     default="PPO",
-    choices=["PPO", "SAC", "IPMD", "IPMD_SR", "IPMD_BILINEAR", "GAIL", "AMP", "ASE"],
+    choices=["PPO", "SAC", "FASTSAC", "IPMD", "IPMD_SR", "IPMD_BILINEAR", "GAIL", "AMP", "ASE"],
     help="RLOpt algorithm to train (must match the agent config).",
 )
 parser.add_argument(
@@ -141,13 +141,14 @@ from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 from isaaclab_imitation.envs.rlopt import IsaacLabTerminalObsReader, IsaacLabWrapper
 from isaaclab_tasks.utils.hydra import hydra_task_config
-from rlopt.agent import AMP, ASE, GAIL, IPMD, IPMDBilinear, IPMDSR, PPO, SAC
+from rlopt.agent import AMP, ASE, GAIL, IPMD, IPMDBilinear, IPMDSR, PPO, SAC, FastSAC
 from rlopt.config_base import RLOptConfig, TrainerConfig
 from torchrl.envs import (
     Compose,
     RewardSum,
     StepCounter,
     TransformedEnv,
+    RewardClipping,
 )
 
 torch.set_float32_matmul_precision("high")
@@ -158,6 +159,7 @@ logger = logging.getLogger(__name__)
 ALGORITHM_CLASS_MAP = {
     "PPO": PPO,
     "SAC": SAC,
+    "FASTSAC": FastSAC,
     "IPMD": IPMD,
     "IPMD_SR": IPMDSR,
     "IPMD_BILINEAR": IPMDBilinear,
@@ -169,6 +171,7 @@ ALGORITHM_CLASS_MAP = {
 ENTRY_POINT_ALGORITHM_MAP = {
     "rlopt_ppo_cfg_entry_point": "PPO",
     "rlopt_sac_cfg_entry_point": "SAC",
+    "rlopt_fastsac_cfg_entry_point": "FASTSAC",
     "rlopt_ipmd_cfg_entry_point": "IPMD",
     "rlopt_ipmd_sr_cfg_entry_point": "IPMD_SR",
     "rlopt_ipmd_bilinear_cfg_entry_point": "IPMD_BILINEAR",
@@ -291,7 +294,8 @@ def main(
     agent_cfg.seed = args_cli.seed if args_cli.seed is not None else agent_cfg.seed
     if agent_cfg.trainer is None:
         agent_cfg.trainer = TrainerConfig()
-    agent_cfg.trainer.log_interval = max(1, int(args_cli.log_interval))
+    if args_cli.log_interval is not None:
+        agent_cfg.trainer.log_interval = max(1, int(args_cli.log_interval))
     agent_cfg.collector.frames_per_batch *= env_cfg.scene.num_envs
     # max_iterations is expressed in rollout iterations, so override total_frames
     # after scaling frames_per_batch to the actual number of simulated envs.
@@ -369,6 +373,7 @@ def main(
         transform=Compose(
             RewardSum(),  # type: ignore
             StepCounter(1000),  # type: ignore
+            RewardClipping(-10.0, 5.0),  # type: ignore
         ),
     )
 

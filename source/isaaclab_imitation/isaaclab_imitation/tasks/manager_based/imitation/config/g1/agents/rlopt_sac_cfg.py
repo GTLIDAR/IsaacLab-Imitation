@@ -37,27 +37,31 @@ class G1ImitationRLOptSACConfig(SACRLOptConfig):
 
         self.policy.input_keys = list(VANILLA_POLICY_INPUT_KEYS)
         self.q_function.input_keys = list(VANILLA_CRITIC_INPUT_KEYS)
-        if self.value_function is not None:
-            self.value_function.input_keys = list(VANILLA_CRITIC_INPUT_KEYS)
-
-        self.collector.frames_per_batch = 24
-        self.collector.init_random_frames = 0
+        self.value_function = None
+        self.collector.frames_per_batch = 12
         self.collector.total_frames = 100_000_000
-
+        self.replay_buffer.size = 100_000
         self.loss.epochs = 1
-        self.loss.mini_batch_size = 256
+        self.loss.mini_batch_size = 4_096 * 4
+        self.collector.init_random_frames = 0
         self.loss.gamma = 0.99
-
         self.policy.num_cells = [512, 256, 128]
         self.q_function.num_cells = [512, 256, 128]
-
         self.sac.alpha_init = 1.0
+        self.sac.min_alpha = 0.001
         self.sac.target_entropy = "auto"
         self.sac.num_qvalue_nets = 2
-
+        self.sac.clip_log_std = True
+        self.sac.log_std_min = -5.0
+        self.sac.log_std_max = 2.0
         self.optim.target_update_polyak = 0.995
         self.optim.lr = 3.0e-4
-
-        self.save_interval = 500
+        self.optim.weight_decay = 0.0
+        self.save_interval = 5_000_000   # samples
+        self.trainer.progress_bar = True
+        self.trainer.log_interval = 1_000_000  # samples
         self.compile.compile = False
         self.collector.no_cuda_sync = True
+        self.sac.utd_ratio = 0.3
+
+        self.logger.project_name = "G1-Imitation-RLOpt-SAC"

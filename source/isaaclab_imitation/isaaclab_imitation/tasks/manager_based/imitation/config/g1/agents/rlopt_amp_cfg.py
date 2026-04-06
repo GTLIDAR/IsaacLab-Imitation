@@ -79,7 +79,7 @@ class G1ImitationRLOptAMPConfig(AMPRLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 30000 * 4096 * 24
-        self.save_interval = 500
+        self.save_interval = 5_000_000   # samples
 
         self.gail.expert_batch_size = int(self.loss.mini_batch_size)
         self.gail.discriminator_updates_per_policy_update = 2
@@ -110,3 +110,6 @@ class G1ImitationRLOptAMPConfig(AMPRLOptConfig):
         self.gail.reward_mix_alpha_when_unstable = 0.2
         self.gail.reward_mix_gate_abs_gap_max = 0.75
         self.gail.reward_mix_alpha_when_gap_large = 0.25
+
+        self.trainer.progress_bar = True
+        self.trainer.log_interval = 1_000_000  # samples
