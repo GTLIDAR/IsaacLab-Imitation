@@ -14,48 +14,52 @@ def _select_last_dim(values: torch.Tensor, ids: torch.Tensor | slice) -> torch.T
     return values.index_select(-1, ids)
 
 
-def reference_joint_pos(
+def expert_joint_pos(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     joint_ids = env._get_joint_ids_tensor_fast(asset_cfg.joint_ids)
-    return _select_last_dim(env.current_reference["joint_pos"], joint_ids)
+    return _select_last_dim(env.current_expert_frame["joint_pos"], joint_ids)
 
 
-def reference_joint_vel(
+def expert_joint_vel(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     joint_ids = env._get_joint_ids_tensor_fast(asset_cfg.joint_ids)
-    return _select_last_dim(env.current_reference["joint_vel"], joint_ids)
+    return _select_last_dim(env.current_expert_frame["joint_vel"], joint_ids)
 
 
-def reference_root_lin_vel(
+def expert_root_lin_vel(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    return env.current_reference["root_lin_vel"]
+    del asset_cfg
+    return env.current_expert_frame["root_lin_vel"]
 
 
-def reference_root_ang_vel(
+def expert_root_ang_vel(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    return env.current_reference["root_ang_vel"]
+    del asset_cfg
+    return env.current_expert_frame["root_ang_vel"]
 
 
-def reference_root_pos(
+def expert_root_pos(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    return env.current_reference["root_pos"]
+    del asset_cfg
+    return env.current_expert_frame["root_pos"]
 
 
-def reference_root_quat(
+def expert_root_quat(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    return env.current_reference["root_quat"]
+    del asset_cfg
+    return env.current_expert_frame["root_quat"]
 
 
-def reference_motion_command(
+def expert_motion_command(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    return env._get_reference_motion_command_fast(asset_cfg.joint_ids)
+    return env._get_expert_motion_command_fast(asset_cfg.joint_ids)
 
 
 def agent_latent_command(
@@ -65,11 +69,12 @@ def agent_latent_command(
     return env.get_agent_latent_command()
 
 
-def reference_anchor_pos_b(
+def expert_anchor_pos_b(
     env: ImitationRLEnv,
     anchor_body_name: str = "torso_link",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
+    del asset_cfg
     robot_anchor_pos_w, robot_anchor_quat_w = env._get_robot_anchor_state_w_fast(
         anchor_body_name
     )
@@ -85,11 +90,12 @@ def reference_anchor_pos_b(
     return anchor_pos_b[:, 0, :]
 
 
-def reference_anchor_ori_b(
+def expert_anchor_ori_b(
     env: ImitationRLEnv,
     anchor_body_name: str = "torso_link",
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
+    del asset_cfg
     robot_anchor_pos_w, robot_anchor_quat_w = env._get_robot_anchor_state_w_fast(
         anchor_body_name
     )
@@ -103,6 +109,52 @@ def reference_anchor_ori_b(
         ref_anchor_quat_w,
     )
     return quat_to_rot6d_flat(anchor_ori_b[:, 0, :])
+
+
+def expert_window_motion(
+    env: ImitationRLEnv,
+    past_steps: int = 1,
+    future_steps: int = 1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    return env.get_current_expert_window_term(
+        term_name="expert_motion",
+        past_steps=past_steps,
+        future_steps=future_steps,
+        joint_ids=asset_cfg.joint_ids,
+    )
+
+
+def expert_window_anchor_pos_b(
+    env: ImitationRLEnv,
+    past_steps: int = 1,
+    future_steps: int = 1,
+    anchor_body_name: str = "torso_link",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    del asset_cfg
+    return env.get_current_expert_window_term(
+        term_name="expert_anchor_pos_b",
+        past_steps=past_steps,
+        future_steps=future_steps,
+        anchor_body_name=anchor_body_name,
+    )
+
+
+def expert_window_anchor_ori_b(
+    env: ImitationRLEnv,
+    past_steps: int = 1,
+    future_steps: int = 1,
+    anchor_body_name: str = "torso_link",
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    del asset_cfg
+    return env.get_current_expert_window_term(
+        term_name="expert_anchor_ori_b",
+        past_steps=past_steps,
+        future_steps=future_steps,
+        anchor_body_name=anchor_body_name,
+    )
 
 
 def robot_body_pos_b(

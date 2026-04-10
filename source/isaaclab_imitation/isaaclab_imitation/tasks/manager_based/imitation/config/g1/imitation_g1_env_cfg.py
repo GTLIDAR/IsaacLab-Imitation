@@ -115,7 +115,7 @@ def _g1_tracked_body_obs_params() -> dict[str, object]:
     }
 
 
-def _g1_reference_motion_obs_params() -> dict[str, object]:
+def _g1_expert_motion_obs_params() -> dict[str, object]:
     return {
         "asset_cfg": SceneEntityCfg(
             "robot",
@@ -124,10 +124,30 @@ def _g1_reference_motion_obs_params() -> dict[str, object]:
     }
 
 
-def _g1_reference_anchor_obs_params() -> dict[str, object]:
+def _g1_expert_anchor_obs_params() -> dict[str, object]:
     return {
         "asset_cfg": SceneEntityCfg("robot"),
         "anchor_body_name": G1_OBS_ANCHOR_BODY_NAME,
+    }
+
+
+def _g1_expert_window_motion_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": SceneEntityCfg(
+            "robot",
+            joint_names=G1_29DOF_JOINT_NAMES,
+        ),
+        "past_steps": 0,
+        "future_steps": 0,
+    }
+
+
+def _g1_expert_window_anchor_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": SceneEntityCfg("robot"),
+        "anchor_body_name": G1_OBS_ANCHOR_BODY_NAME,
+        "past_steps": 0,
+        "future_steps": 0,
     }
 
 
@@ -151,13 +171,13 @@ class G1ObservationCfg:
     class PolicyCfg(ObsGroup):
         """Policy observations."""
 
-        reference_motion = ObsTerm(
-            func=mdp.reference_motion_command,
-            params=_g1_reference_motion_obs_params(),
+        expert_motion = ObsTerm(
+            func=mdp.expert_motion_command,
+            params=_g1_expert_motion_obs_params(),
         )
-        reference_anchor_ori_b = ObsTerm(
-            func=mdp.reference_anchor_ori_b,
-            params=_g1_reference_anchor_obs_params(),
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_anchor_ori_b,
+            params=_g1_expert_anchor_obs_params(),
             noise=Unoise(n_min=-0.05, n_max=0.05),
         )
         base_ang_vel = ObsTerm(
@@ -179,17 +199,17 @@ class G1ObservationCfg:
     class CriticCfg(ObsGroup):
         """Privileged critic observations."""
 
-        reference_motion = ObsTerm(
-            func=mdp.reference_motion_command,
-            params=_g1_reference_motion_obs_params(),
+        expert_motion = ObsTerm(
+            func=mdp.expert_motion_command,
+            params=_g1_expert_motion_obs_params(),
         )
-        reference_anchor_pos_b = ObsTerm(
-            func=mdp.reference_anchor_pos_b,
-            params=_g1_reference_anchor_obs_params(),
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
         )
-        reference_anchor_ori_b = ObsTerm(
-            func=mdp.reference_anchor_ori_b,
-            params=_g1_reference_anchor_obs_params(),
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_anchor_ori_b,
+            params=_g1_expert_anchor_obs_params(),
         )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
@@ -209,22 +229,61 @@ class G1ObservationCfg:
             self.concatenate_terms = False
 
     @configclass
-    class ReferenceCfg(ObsGroup):
-        """Reference kinematic observations."""
+    class ExpertStateCfg(ObsGroup):
+        """Single-frame expert observations exposed through the observation manager."""
 
-        joint_pos = ObsTerm(func=mdp.joint_pos)
-        joint_vel = ObsTerm(func=mdp.joint_vel)
-        root_pos = ObsTerm(func=mdp.root_pos_w)
-        root_quat = ObsTerm(func=mdp.root_quat_w)
-        root_lin_vel = ObsTerm(func=mdp.root_lin_vel_w)
-        root_ang_vel = ObsTerm(func=mdp.root_ang_vel_w)
+        joint_pos = ObsTerm(
+            func=mdp.expert_joint_pos,
+            params=_g1_expert_motion_obs_params(),
+        )
+        joint_vel = ObsTerm(
+            func=mdp.expert_joint_vel,
+            params=_g1_expert_motion_obs_params(),
+        )
+        root_pos = ObsTerm(func=mdp.expert_root_pos)
+        root_quat = ObsTerm(func=mdp.expert_root_quat)
+        root_lin_vel = ObsTerm(func=mdp.expert_root_lin_vel)
+        root_ang_vel = ObsTerm(func=mdp.expert_root_ang_vel)
+        expert_motion = ObsTerm(
+            func=mdp.expert_motion_command,
+            params=_g1_expert_motion_obs_params(),
+        )
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_anchor_ori_b,
+            params=_g1_expert_anchor_obs_params(),
+        )
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
+        )
+
+        def __post_init__(self):
+            self.concatenate_terms = False
+
+    @configclass
+    class ExpertWindowCfg(ObsGroup):
+        """Temporal expert observations exposed through the observation manager."""
+
+        expert_motion = ObsTerm(
+            func=mdp.expert_window_motion,
+            params=_g1_expert_window_motion_obs_params(),
+        )
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_window_anchor_pos_b,
+            params=_g1_expert_window_anchor_obs_params(),
+        )
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_window_anchor_ori_b,
+            params=_g1_expert_window_anchor_obs_params(),
+        )
 
         def __post_init__(self):
             self.concatenate_terms = False
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    reference: ReferenceCfg = ReferenceCfg()
+    expert_state: ExpertStateCfg = ExpertStateCfg()
+    expert_window: ExpertWindowCfg = ExpertWindowCfg()
 
 
 @configclass
@@ -457,6 +516,10 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
     reference_start_frame: int = 0
     enable_latent_command: bool = False
     latent_command_dim: int = 64
+    latent_patch_past_steps: int = 0
+    latent_patch_future_steps: int = 0
+    random_reset_step_min: int = 0
+    random_reset_step_max: int = 0
 
     _debug_rewards: bool = False
 
@@ -469,6 +532,17 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
 
     reference_joint_names: list[str] = G1_29DOF_JOINT_NAMES.copy()
     target_joint_names: list[str] = G1_29DOF_JOINT_NAMES.copy()
+
+    def _sync_expert_window_observation_params(self) -> None:
+        past_steps = int(self.latent_patch_past_steps)
+        future_steps = int(self.latent_patch_future_steps)
+        for term in (
+            self.observations.expert_window.expert_motion,
+            self.observations.expert_window.expert_anchor_pos_b,
+            self.observations.expert_window.expert_anchor_ori_b,
+        ):
+            term.params["past_steps"] = past_steps
+            term.params["future_steps"] = future_steps
 
     def __post_init__(self) -> None:
         super().__post_init__()  # type: ignore
@@ -497,6 +571,19 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
         )
 
         self.scene.height_scanner = None
+
+        if int(self.latent_patch_past_steps) < 0:
+            raise ValueError("latent_patch_past_steps must be >= 0.")
+        if int(self.latent_patch_future_steps) < 0:
+            raise ValueError("latent_patch_future_steps must be >= 0.")
+        if int(self.random_reset_step_min) < 0:
+            raise ValueError("random_reset_step_min must be >= 0.")
+        if int(self.random_reset_step_max) < int(self.random_reset_step_min):
+            raise ValueError(
+                "random_reset_step_max must be >= random_reset_step_min."
+            )
+
+        self._sync_expert_window_observation_params()
 
 
 @configclass

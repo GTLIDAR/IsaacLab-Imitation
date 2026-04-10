@@ -88,8 +88,8 @@ def reset_joints_to_reference(
 ):
     asset: Articulation = env.scene[asset_cfg.name]
     env_ids = env_ids.to(dtype=torch.int64, device=asset.device)
-    reference_joint_pos = env.current_reference["joint_pos"].index_select(0, env_ids)
-    reference_joint_vel = env.current_reference["joint_vel"].index_select(0, env_ids)
+    reference_joint_pos = env.current_expert_frame["joint_pos"].index_select(0, env_ids)
+    reference_joint_vel = env.current_expert_frame["joint_vel"].index_select(0, env_ids)
     joint_pos = replace_nan_with_default(
         reference_joint_pos, asset.data.default_joint_pos.index_select(0, env_ids)
     ).clone()
@@ -114,7 +114,7 @@ def reset_root_and_joints_to_reference_with_randomization(
     asset: Articulation = env.scene[asset_cfg.name]
     device = asset.device
     env_ids = env_ids.to(dtype=torch.int64, device=device)
-    reference = env.current_reference
+    reference = env.current_expert_frame
     _initialize_reset_bounds(env, pose_range, velocity_range, device)
 
     if env._mdp_reset_root_pose_source == "root":

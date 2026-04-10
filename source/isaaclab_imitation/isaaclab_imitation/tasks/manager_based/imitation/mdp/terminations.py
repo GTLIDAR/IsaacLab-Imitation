@@ -33,7 +33,7 @@ def reference_joint_pos_deviation_too_much(
     joint_ids = env._get_joint_ids_tensor_fast(asset_cfg.joint_ids)
     joint_pos_actual = _select_last_dim(asset.data.joint_pos, joint_ids)
     joint_pos_reference = _select_last_dim(
-        env.current_reference["joint_pos"], joint_ids
+        env.current_expert_frame["joint_pos"], joint_ids
     )
     return rms_error(joint_pos_actual, joint_pos_reference) > threshold
 

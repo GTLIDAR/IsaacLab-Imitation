@@ -106,12 +106,6 @@ class IsaacLabWrapper(GymWrapper):
     def get_agent_latent_command(self, env_ids=None):
         return self._base_isaac_env().get_agent_latent_command(env_ids=env_ids)
 
-    def get_current_reference_observations(self, required_keys, env_ids=None):
-        return self._base_isaac_env().get_current_reference_observations(
-            required_keys=required_keys,
-            env_ids=env_ids,
-        )
-
     @property
     def _is_batched(self) -> bool:
         return True

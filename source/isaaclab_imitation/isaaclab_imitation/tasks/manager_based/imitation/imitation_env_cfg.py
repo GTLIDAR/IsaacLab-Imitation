@@ -134,7 +134,6 @@ class ObservationsCfg:
             func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01)
         )
         joint_vel = ObsTerm(func=mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
-        reference_joint_pos = ObsTerm(func=mdp.reference_joint_pos)
         actions = ObsTerm(func=mdp.last_action)
         height_scan = ObsTerm(
             func=mdp.height_scan,

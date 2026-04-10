@@ -33,6 +33,30 @@ display_warning() {
     echo -e "\033[31mWARNING: $1\033[0m"
 }
 
+resolve_local_tmp_dir() {
+    local candidate=""
+
+    for candidate in "${TMPDIR:-}" "/tmp"; do
+        if [ -z "$candidate" ]; then
+            continue
+        fi
+        if mkdir -p "$candidate" >/dev/null 2>&1; then
+            realpath "$candidate" 2>/dev/null || echo "$candidate"
+            return 0
+        fi
+    done
+
+    candidate="$SCRIPT_DIR"
+    if mkdir -p "$candidate" >/dev/null 2>&1; then
+        display_warning "Could not prepare TMPDIR='${TMPDIR:-<unset>}'; using '$candidate' for local temporary files."
+        realpath "$candidate" 2>/dev/null || echo "$candidate"
+        return 0
+    fi
+
+    echo "[ERROR] Failed to resolve a writable local temporary directory." >&2
+    exit 1
+}
+
 normalize_git_remote_to_https() {
     local remote_url="$1"
 
@@ -594,9 +618,11 @@ record_repo_sync_manifest() {
     local manifest_remote_file
     local local_path
     local remote_subdir
+    local local_tmp_dir
 
     local_workspace_root="$(realpath "$SCRIPT_DIR/../..")"
-    manifest_local_file="$(mktemp "${TMPDIR:-/tmp}/isaaclab_cluster_repo_manifest.XXXXXX")"
+    local_tmp_dir="$(resolve_local_tmp_dir)"
+    manifest_local_file="$(mktemp "${local_tmp_dir}/isaaclab_cluster_repo_manifest.XXXXXX")"
     manifest_remote_file="$CLUSTER_ISAACLAB_DIR/repo_sync_manifest.tsv"
 
     {
@@ -768,6 +794,9 @@ case $command in
         check_docker_version
         # source env file to get cluster login and path information
         source $SCRIPT_DIR/.env.cluster
+        # Prepend remote $HOME to relative cluster paths.
+        CLUSTER_REMOTE_HOME=$(ssh "$CLUSTER_LOGIN" 'echo $HOME')
+        CLUSTER_SIF_PATH="$CLUSTER_REMOTE_HOME/$CLUSTER_SIF_PATH"
         # make sure exports directory exists
         mkdir -p /$SCRIPT_DIR/exports
         # clear old exports for selected profile
@@ -798,6 +827,16 @@ case $command in
         [ -n "$profile" ] && echo -e "\tUsing profile: $profile"
         [ -n "$job_args" ] && echo -e "\tJob arguments: $job_args"
         source $SCRIPT_DIR/.env.cluster
+        # Prepend remote $HOME to relative cluster paths.
+        CLUSTER_REMOTE_HOME=$(ssh "$CLUSTER_LOGIN" 'echo $HOME')
+        CLUSTER_ISAAC_SIM_CACHE_DIR="$CLUSTER_REMOTE_HOME/$CLUSTER_ISAAC_SIM_CACHE_DIR"
+        CLUSTER_ISAACLAB_DIR="$CLUSTER_REMOTE_HOME/$CLUSTER_ISAACLAB_DIR"
+        CLUSTER_SIF_PATH="$CLUSTER_REMOTE_HOME/$CLUSTER_SIF_PATH"
+        CLUSTER_DATA_DIR="$CLUSTER_REMOTE_HOME/$CLUSTER_DATA_DIR"
+        CLUSTER_HF_TOKEN_FILE="$CLUSTER_REMOTE_HOME/$CLUSTER_HF_TOKEN_FILE"
+        CLUSTER_WANDB_API_KEY_FILE="$CLUSTER_REMOTE_HOME/$CLUSTER_WANDB_API_KEY_FILE"
+        [ -n "${CLUSTER_G1_MANIFEST_PATH:-}" ] && CLUSTER_G1_MANIFEST_PATH="$CLUSTER_REMOTE_HOME/$CLUSTER_G1_MANIFEST_PATH"
+        [ -n "${CLUSTER_G1_DATA_ROOT:-}" ] && CLUSTER_G1_DATA_ROOT="$CLUSTER_REMOTE_HOME/$CLUSTER_G1_DATA_ROOT"
         CLUSTER_ISAACLAB_BASE_DIR="$CLUSTER_ISAACLAB_DIR"
         # Get current date and time
         current_datetime=$(date +"%Y%m%d_%H%M%S")

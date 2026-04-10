@@ -148,6 +148,16 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 source $SCRIPT_DIR/.env.cluster
 source $SCRIPT_DIR/../.env.base
 
+# Paths in .env.cluster are relative to $HOME; prepend it to make them absolute.
+CLUSTER_ISAAC_SIM_CACHE_DIR="$HOME/$CLUSTER_ISAAC_SIM_CACHE_DIR"
+CLUSTER_ISAACLAB_DIR="$HOME/$CLUSTER_ISAACLAB_DIR"
+CLUSTER_SIF_PATH="$HOME/$CLUSTER_SIF_PATH"
+CLUSTER_DATA_DIR="$HOME/$CLUSTER_DATA_DIR"
+CLUSTER_HF_TOKEN_FILE="$HOME/$CLUSTER_HF_TOKEN_FILE"
+CLUSTER_WANDB_API_KEY_FILE="$HOME/$CLUSTER_WANDB_API_KEY_FILE"
+[ -n "${CLUSTER_G1_MANIFEST_PATH:-}" ] && CLUSTER_G1_MANIFEST_PATH="$HOME/$CLUSTER_G1_MANIFEST_PATH"
+[ -n "${CLUSTER_G1_DATA_ROOT:-}" ] && CLUSTER_G1_DATA_ROOT="$HOME/$CLUSTER_G1_DATA_ROOT"
+
 # Runtime home inside singularity container.
 # Defaults to /home/$USER so Isaac Sim writes to a user path, but the path is
 # backed by scratch via bind mount below.

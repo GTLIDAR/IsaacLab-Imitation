@@ -4,8 +4,8 @@ from isaaclab_imitation.envs.rlopt import IPMDSRRLOptConfig
 
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "reference_motion"),
-    ("policy", "reference_anchor_ori_b"),
+    ("policy", "expert_motion"),
+    ("policy", "expert_anchor_ori_b"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -13,9 +13,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "reference_motion"),
-    ("critic", "reference_anchor_pos_b"),
-    ("critic", "reference_anchor_ori_b"),
+    ("critic", "expert_motion"),
+    ("critic", "expert_anchor_pos_b"),
+    ("critic", "expert_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -37,9 +37,9 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 
 LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "latent_command"),
-    ("critic", "reference_motion"),
-    ("critic", "reference_anchor_pos_b"),
-    ("critic", "reference_anchor_ori_b"),
+    ("critic", "expert_motion"),
+    ("critic", "expert_anchor_pos_b"),
+    ("critic", "expert_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "projected_gravity"),
@@ -52,13 +52,13 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "last_action"),
 ]
 
-REFERENCE_INPUT_KEYS: list[tuple[str, str]] = [
-    ("reference", "joint_pos"),
-    ("reference", "joint_vel"),
-    ("reference", "root_pos"),
-    ("reference", "root_quat"),
-    ("reference", "root_lin_vel"),
-    ("reference", "root_ang_vel"),
+EXPERT_INPUT_KEYS: list[tuple[str, str]] = [
+    ("expert_state", "joint_pos"),
+    ("expert_state", "joint_vel"),
+    ("expert_state", "root_pos"),
+    ("expert_state", "root_quat"),
+    ("expert_state", "root_lin_vel"),
+    ("expert_state", "root_ang_vel"),
 ]
 
 
@@ -81,7 +81,7 @@ class _G1ImitationRLOptIPMDSRBaseConfig(IPMDSRRLOptConfig):
                 if use_latent_command
                 else list(VANILLA_CRITIC_INPUT_KEYS)
             )
-        self.ipmd.reward_input_keys = list(REFERENCE_INPUT_KEYS)
+        self.ipmd.reward_input_keys = list(EXPERT_INPUT_KEYS)
         self.ipmd.latent_key = ("policy", "latent_command")
         self.ipmd.use_latent_command = use_latent_command
 
@@ -95,7 +95,7 @@ class _G1ImitationRLOptIPMDSRBaseConfig(IPMDSRRLOptConfig):
 
         self.ipmd.use_latent_command = bool(self._default_use_latent_command)
         self.ipmd.command_source = (
-            "reference_posterior" if self._default_use_latent_command else "random"
+            "rollout_posterior" if self._default_use_latent_command else "random"
         )
         self.sync_input_keys()
 
@@ -141,7 +141,7 @@ class _G1ImitationRLOptIPMDSRBaseConfig(IPMDSRRLOptConfig):
         self.ipmd.bc_coef = 0.1
         self.compile.compile = False
         self.trainer.progress_bar = True
-        self.trainer.log_interval = 1_000_000  # samples
+        self.trainer.log_interval = 10_000_000  # samples
         self.ipmd.reward_output_scale = 1.0
         self.ipmd.estimated_reward_clamp_min = -1.0
         self.ipmd.estimated_reward_clamp_max = 1.0

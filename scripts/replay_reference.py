@@ -1216,7 +1216,7 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
     # prepare a zero action with the right shape
     action = torch.as_tensor(env.action_space.sample(), device=env.unwrapped.device)
     action = torch.zeros_like(action)
-    reference = env.unwrapped.get_reference_data()
+    reference = env.unwrapped.get_expert_trajectory_data()
     debug_interval = max(1, int(args_cli.debug_reference_interval))
     debug_agg_max: dict[str, float] = {
         "root_pos_err_max": 0.0,
@@ -1290,7 +1290,7 @@ def main(env_cfg, agent_cfg):  # noqa: ARG001
     while simulation_app.is_running():
         start_time = time.time()
         next_obs, reward, terminated, truncated, extras = env.step(action)
-        next_reference = env.unwrapped.get_reference_data()
+        next_reference = env.unwrapped.get_expert_trajectory_data()
         if args_cli.debug_reference_match and (timestep % debug_interval == 0):
             errors = _compute_replay_reference_match_errors(env, reference)
             debug_report = _print_replay_reference_match_debug(

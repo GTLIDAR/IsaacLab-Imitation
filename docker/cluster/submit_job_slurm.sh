@@ -13,7 +13,7 @@ printf -v quoted_job_args '%q ' "$@"
 cat <<EOT > job.sh
 #!/bin/bash
 
-#SBATCH --gpus-per-node=h200:1
+#SBATCH --gpus-per-node=l40s:1
 #SBATCH -N1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem-per-gpu=48G

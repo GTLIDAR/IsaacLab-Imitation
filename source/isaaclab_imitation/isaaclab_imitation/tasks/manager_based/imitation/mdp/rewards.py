@@ -49,7 +49,7 @@ def track_joint_pos(
 ) -> torch.Tensor:
     joint_ids = env._get_joint_ids_tensor_fast(asset_cfg.joint_ids)
     qpos_actual = _select_last_dim(env.scene[asset_cfg.name].data.joint_pos, joint_ids)
-    qpos_reference = _select_last_dim(env.current_reference["joint_pos"], joint_ids)
+    qpos_reference = _select_last_dim(env.current_expert_frame["joint_pos"], joint_ids)
     squared_error = torch.sum((qpos_actual - qpos_reference) ** 2, dim=1)
     return gaussian_from_squared_error(squared_error, sigma)
 
@@ -61,7 +61,7 @@ def track_joint_vel(
 ) -> torch.Tensor:
     joint_ids = env._get_joint_ids_tensor_fast(asset_cfg.joint_ids)
     qvel_actual = _select_last_dim(env.scene[asset_cfg.name].data.joint_vel, joint_ids)
-    qvel_reference = _select_last_dim(env.current_reference["joint_vel"], joint_ids)
+    qvel_reference = _select_last_dim(env.current_expert_frame["joint_vel"], joint_ids)
     squared_error = torch.sum((qvel_actual - qvel_reference) ** 2, dim=1)
     return gaussian_from_squared_error(squared_error, sigma)
 

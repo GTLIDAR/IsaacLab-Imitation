@@ -1,9 +1,11 @@
 # Feiyang Wu (feiyangwu@gatech.edu)
+# ruff: noqa: E402
 import argparse
 import logging
 import os
 import signal
 import sys
+import warnings
 from pathlib import Path
 
 import torch
@@ -106,17 +108,21 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 
-def cleanup_pbar(*args):
-    """
-    A small helper to stop training and
-    cleanup progress bar properly on ctrl+c
-    """
-    import gc
+_sigint_seen = False
 
-    tqdm_objects = [obj for obj in gc.get_objects() if "tqdm" in type(obj).__name__]
-    for tqdm_object in tqdm_objects:
-        if "tqdm_rich" in type(tqdm_object).__name__:
-            tqdm_object.close()
+
+def cleanup_pbar(_signum, _frame):
+    """Handle Ctrl+C quickly and safely.
+
+    Keep the handler minimal to avoid exceptions inside unrelated callback
+    contexts (e.g. Isaac Sim GC hooks) and ensure first Ctrl+C stops training.
+    """
+    global _sigint_seen
+    if not _sigint_seen:
+        _sigint_seen = True
+        print("\n[INFO] Ctrl+C received. Stopping training...")
+        # Restore default behavior for any subsequent interrupt during shutdown.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
     raise KeyboardInterrupt
 
 
@@ -152,6 +158,20 @@ from torchrl.envs import (
 )
 
 torch.set_float32_matmul_precision("high")
+
+# Suppress known third-party deprecations until upstream packages update.
+warnings.filterwarnings(
+    "ignore",
+    message=r"Read the `app_url` setting from the appropriate Settings object\.",
+    category=DeprecationWarning,
+    module=r"wandb\.analytics\.sentry",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"The `Scope\.user` setter is deprecated in favor of `Scope\.set_user\(\)`\.",
+    category=DeprecationWarning,
+    module=r"wandb\.analytics\.sentry",
+)
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -303,6 +323,23 @@ def main(
         agent_cfg.collector.total_frames = (
             args_cli.max_iterations * agent_cfg.collector.frames_per_batch
         )
+    # TorchRL collectors warn and over-collect when total_frames is not divisible by
+    # frames_per_batch. Align to an exact number of rollout batches.
+    frames_per_batch = int(agent_cfg.collector.frames_per_batch)
+    total_frames = int(agent_cfg.collector.total_frames)
+    if frames_per_batch > 0:
+        aligned_total_frames = max(
+            frames_per_batch,
+            (total_frames // frames_per_batch) * frames_per_batch,
+        )
+        if aligned_total_frames != total_frames:
+            logger.warning(
+                "Adjusting collector.total_frames from %d to %d to match frames_per_batch=%d.",
+                total_frames,
+                aligned_total_frames,
+                frames_per_batch,
+            )
+            agent_cfg.collector.total_frames = aligned_total_frames
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
     env_cfg.seed = agent_cfg.seed
@@ -369,7 +406,7 @@ def main(
         )  # type: ignore
     )
     env = TransformedEnv(
-        env=env,
+        base_env=env,
         transform=Compose(
             RewardSum(),  # type: ignore
             StepCounter(1000),  # type: ignore
@@ -397,19 +434,22 @@ def main(
             agent.load_model(checkpoint_path)
 
     # run training
-    agent.train()
-
-    # close the simulator
-    env.close()
+    try:
+        agent.train()
+    except KeyboardInterrupt:
+        print("\n[INFO] Training interrupted by user.")
+    finally:
+        env.close()
 
     print(f"Training time: {round(time.time() - start_time, 2)} seconds")
 
-    # close the simulator
-    env.close()
-
 
 if __name__ == "__main__":
-    # run the main function
-    main()
-    # close sim app
-    simulation_app.close()  # type: ignore
+    try:
+        # run the main function
+        main()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        # close sim app
+        simulation_app.close()  # type: ignore

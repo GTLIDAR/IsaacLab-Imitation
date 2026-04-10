@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import torch
 
 from isaaclab.utils.math import (
@@ -16,13 +18,26 @@ from isaaclab.utils.math import (
 )
 
 
-@torch.compile
+def _maybe_compile(fn):
+    """Keep Torch Inductor opt-in for small MDP kernels.
+
+    These helpers are called with several batch/window shapes during startup and
+    expert sampling. Compiling every shape can spawn many Inductor workers and
+    exhaust memory before training reaches the first update.
+    """
+    enabled = os.environ.get("ISAACLAB_IMITATION_COMPILE_MDP", "").lower()
+    if enabled in {"1", "true", "yes", "on"}:
+        return torch.compile(fn)
+    return fn
+
+
+@_maybe_compile
 def quat_to_rot6d_flat(quat: torch.Tensor) -> torch.Tensor:
     quat_mat = matrix_from_quat(quat)
     return quat_mat[..., :2].reshape(quat_mat.shape[0], -1)
 
 
-@torch.compile
+@_maybe_compile
 def body_pose_in_anchor_frame(
     anchor_pos_w: torch.Tensor,
     anchor_quat_w: torch.Tensor,
@@ -38,7 +53,7 @@ def body_pose_in_anchor_frame(
     )
 
 
-@torch.compile
+@_maybe_compile
 def transform_root_pose_to_world(
     align_quat: torch.Tensor,
     align_pos: torch.Tensor,
@@ -48,7 +63,7 @@ def transform_root_pose_to_world(
     return quat_apply(align_quat, ref_pos) + align_pos, quat_mul(align_quat, ref_quat)
 
 
-@torch.compile
+@_maybe_compile
 def transform_root_velocity_to_world(
     align_quat: torch.Tensor,
     ref_lin_vel: torch.Tensor,
@@ -57,7 +72,7 @@ def transform_root_velocity_to_world(
     return quat_apply(align_quat, ref_lin_vel), quat_apply(align_quat, ref_ang_vel)
 
 
-@torch.compile
+@_maybe_compile
 def transform_body_pose_to_world(
     align_quat: torch.Tensor,
     align_pos: torch.Tensor,
@@ -78,7 +93,7 @@ def transform_body_pose_to_world(
     return ref_pos_w, ref_quat_w
 
 
-@torch.compile
+@_maybe_compile
 def transform_body_velocity_to_world(
     align_quat: torch.Tensor,
     ref_cvel: torch.Tensor,
@@ -96,28 +111,28 @@ def transform_body_velocity_to_world(
     return ref_ang_vel_w, ref_lin_vel_w
 
 
-@torch.compile
+@_maybe_compile
 def gaussian_from_squared_error(
     squared_error: torch.Tensor, sigma: float
 ) -> torch.Tensor:
     return torch.exp(-squared_error / (2.0 * sigma * sigma))
 
 
-@torch.compile
+@_maybe_compile
 def tracking_exp_from_squared_error(
     squared_error: torch.Tensor, std: float
 ) -> torch.Tensor:
     return torch.exp(-squared_error / (std * std))
 
 
-@torch.compile
+@_maybe_compile
 def replace_nan_with_default(
     values: torch.Tensor, defaults: torch.Tensor
 ) -> torch.Tensor:
     return torch.where(torch.isnan(values), defaults, values)
 
 
-@torch.compile
+@_maybe_compile
 def relative_pose_from_bodies(
     body_pos: torch.Tensor, body_quat: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -134,7 +149,7 @@ def relative_pose_from_bodies(
     return rel_pos, rel_quat
 
 
-@torch.compile
+@_maybe_compile
 def relative_velocity_from_bodies(
     body_quat: torch.Tensor,
     body_ang_vel: torch.Tensor,
@@ -160,22 +175,22 @@ def relative_velocity_from_bodies(
     return torch.cat([rel_ang, rel_lin], dim=-1)
 
 
-@torch.compile
+@_maybe_compile
 def rms_error(actual: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     return torch.sqrt(torch.mean((actual - target) ** 2, dim=1))
 
 
-@torch.compile
+@_maybe_compile
 def xy_error_norm(actual_xy: torch.Tensor, target_xy: torch.Tensor) -> torch.Tensor:
     return torch.sqrt(torch.sum((actual_xy - target_xy) ** 2, dim=1))
 
 
-@torch.compile
+@_maybe_compile
 def joint_pos_target_l2_kernel(joint_pos: torch.Tensor, target: float) -> torch.Tensor:
     return torch.sum(torch.square(wrap_to_pi(joint_pos) - target), dim=1)
 
 
-@torch.compile
+@_maybe_compile
 def reroot_body_positions(
     robot_anchor_pos_w: torch.Tensor,
     robot_anchor_quat_w: torch.Tensor,
@@ -196,7 +211,7 @@ def reroot_body_positions(
     return delta_pos.unsqueeze(1).expand(-1, num_bodies, -1) + ref_offset_rot
 
 
-@torch.compile
+@_maybe_compile
 def reroot_body_orientations(
     robot_anchor_quat_w: torch.Tensor,
     ref_quat_w: torch.Tensor,
@@ -208,14 +223,14 @@ def reroot_body_orientations(
     return quat_mul(delta_ori_exp, ref_quat_w.reshape(-1, 4)).reshape(-1, num_bodies, 4)
 
 
-@torch.compile
+@_maybe_compile
 def quat_error_squared(
     actual_quat: torch.Tensor, target_quat: torch.Tensor
 ) -> torch.Tensor:
     return quat_error_magnitude(actual_quat, target_quat).square()
 
 
-@torch.compile
+@_maybe_compile
 def apply_reset_randomization(
     root_pos: torch.Tensor,
     root_quat: torch.Tensor,

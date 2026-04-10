@@ -4,8 +4,8 @@ from isaaclab_imitation.envs.rlopt import PPORLOptConfig
 
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "reference_motion"),
-    ("policy", "reference_anchor_ori_b"),
+    ("policy", "expert_motion"),
+    ("policy", "expert_anchor_ori_b"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -13,9 +13,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "reference_motion"),
-    ("critic", "reference_anchor_pos_b"),
-    ("critic", "reference_anchor_ori_b"),
+    ("critic", "expert_motion"),
+    ("critic", "expert_anchor_pos_b"),
+    ("critic", "expert_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -73,4 +73,4 @@ class G1ImitationRLOptPPOConfig(PPORLOptConfig):
         self.compile.compile = False
         self.collector.no_cuda_sync = True
         self.trainer.progress_bar = True
-        self.trainer.log_interval = 1_000_000  # samples
+        self.trainer.log_interval = 10_000_000  # samples

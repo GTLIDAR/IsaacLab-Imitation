@@ -4,8 +4,8 @@ from rlopt.agent import GAILRLOptConfig
 
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "reference_motion"),
-    ("policy", "reference_anchor_ori_b"),
+    ("policy", "expert_motion"),
+    ("policy", "expert_anchor_ori_b"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -13,9 +13,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "reference_motion"),
-    ("critic", "reference_anchor_pos_b"),
-    ("critic", "reference_anchor_ori_b"),
+    ("critic", "expert_motion"),
+    ("critic", "expert_anchor_pos_b"),
+    ("critic", "expert_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -25,13 +25,13 @@ VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "last_action"),
 ]
 
-REFERENCE_INPUT_KEYS: list[tuple[str, str]] = [
-    ("reference", "joint_pos"),
-    ("reference", "joint_vel"),
-    ("reference", "root_pos"),
-    ("reference", "root_quat"),
-    ("reference", "root_lin_vel"),
-    ("reference", "root_ang_vel"),
+EXPERT_INPUT_KEYS: list[tuple[str, str]] = [
+    ("expert_state", "joint_pos"),
+    ("expert_state", "joint_vel"),
+    ("expert_state", "root_pos"),
+    ("expert_state", "root_quat"),
+    ("expert_state", "root_lin_vel"),
+    ("expert_state", "root_ang_vel"),
 ]
 
 
@@ -49,7 +49,7 @@ class G1ImitationRLOptGAILConfig(GAILRLOptConfig):
 
         self.policy.input_keys = list(VANILLA_POLICY_INPUT_KEYS)
         self.value_function.input_keys = list(VANILLA_CRITIC_INPUT_KEYS)
-        self.gail.discriminator_input_keys = list(REFERENCE_INPUT_KEYS)
+        self.gail.discriminator_input_keys = list(EXPERT_INPUT_KEYS)
 
         self.collector.init_random_frames = 0
         self.collector.frames_per_batch = 24
@@ -109,4 +109,4 @@ class G1ImitationRLOptGAILConfig(GAILRLOptConfig):
         self.gail.reward_mix_alpha_when_gap_large = 0.25
 
         self.trainer.progress_bar = True
-        self.trainer.log_interval = 1_000_000  # samples
+        self.trainer.log_interval = 10_000_000  # samples

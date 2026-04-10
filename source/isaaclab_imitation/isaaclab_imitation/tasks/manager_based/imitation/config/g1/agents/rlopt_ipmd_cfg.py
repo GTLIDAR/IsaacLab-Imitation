@@ -4,8 +4,8 @@ from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig
 
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "reference_motion"),
-    ("policy", "reference_anchor_ori_b"),
+    ("policy", "expert_motion"),
+    ("policy", "expert_anchor_ori_b"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -13,9 +13,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "reference_motion"),
-    ("critic", "reference_anchor_pos_b"),
-    ("critic", "reference_anchor_ori_b"),
+    ("critic", "expert_motion"),
+    ("critic", "expert_anchor_pos_b"),
+    ("critic", "expert_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -35,11 +35,18 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
     ("policy", "last_action"),
 ]
 
+LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
+    ("expert_window", "expert_motion"),
+    ("expert_window", "expert_anchor_pos_b"),
+    ("expert_window", "expert_anchor_ori_b"),
+]
+
+LATENT_PRIOR_INPUT_KEYS: list[tuple[str, str]] = []
+
 LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "latent_command"),
-    ("critic", "reference_motion"),
-    ("critic", "reference_anchor_pos_b"),
-    ("critic", "reference_anchor_ori_b"),
+    ("critic", "expert_motion"),
+    ("critic", "expert_anchor_pos_b"),
+    ("critic", "expert_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "projected_gravity"),
@@ -52,13 +59,10 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "last_action"),
 ]
 
-REFERENCE_INPUT_KEYS: list[tuple[str, str]] = [
-    ("reference", "joint_pos"),
-    ("reference", "joint_vel"),
-    ("reference", "root_pos"),
-    ("reference", "root_quat"),
-    ("reference", "root_lin_vel"),
-    ("reference", "root_ang_vel"),
+EXPERT_INPUT_KEYS: list[tuple[str, str]] = [
+    ("expert_state", "expert_motion"),
+    ("expert_state", "expert_anchor_pos_b"),
+    ("expert_state", "expert_anchor_ori_b"),
 ]
 
 
@@ -81,7 +85,11 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
                 if use_latent_command
                 else list(VANILLA_CRITIC_INPUT_KEYS)
             )
-        self.ipmd.reward_input_keys = list(REFERENCE_INPUT_KEYS)
+        self.ipmd.reward_input_keys = list(EXPERT_INPUT_KEYS)
+        self.ipmd.latent_learning.posterior_input_keys = list(
+            LATENT_POSTERIOR_INPUT_KEYS
+        )
+        self.ipmd.latent_learning.prior_input_keys = list(LATENT_PRIOR_INPUT_KEYS)
         self.ipmd.latent_key = ("policy", "latent_command")
         self.ipmd.use_latent_command = use_latent_command
 
@@ -94,9 +102,6 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         )
 
         self.ipmd.use_latent_command = bool(self._default_use_latent_command)
-        self.ipmd.command_source = (
-            "reference_posterior" if self._default_use_latent_command else "random"
-        )
         self.sync_input_keys()
 
         # More initial exploration to improve policy-state coverage for inverse reward.
@@ -128,15 +133,38 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 5_000_000_000
-        self.save_interval = 5_000_000   # samples
+        self.save_interval = 5_000_000  # samples
 
         self.ipmd.latent_dim = 64
-        self.ipmd.latent_steps_min = 30
-        self.ipmd.latent_steps_max = 120
+        self.ipmd.latent_steps_min = 1
+        self.ipmd.latent_steps_max = 1
         self.ipmd.latent_vmf_kappa = 1.0
+        self.ipmd.latent_learning.method = "patch_autoencoder"
+        self.ipmd.latent_learning.encoder_hidden_dims = [256, 256]
+        self.ipmd.latent_learning.encoder_activation = "elu"
+        self.ipmd.latent_learning.prior_hidden_dims = [256, 256]
+        self.ipmd.latent_learning.prior_activation = "elu"
+        self.ipmd.latent_learning.patch_past_steps = 1
+        self.ipmd.latent_learning.patch_future_steps = 1
+        self.ipmd.latent_learning.lr = 3.0e-4
+        self.ipmd.latent_learning.grad_clip_norm = 1.0
+        self.ipmd.latent_learning.recon_coeff = 1.0
+        self.ipmd.latent_learning.uniformity_coeff = 0.0
+        self.ipmd.latent_learning.weight_decay_coeff = 0.0
+        self.ipmd.latent_learning.kl_coeff = 0.0
+        self.ipmd.latent_learning.probe_enabled = False
+        self.ipmd.latent_learning.probe_condition_on_state = False
+        self.ipmd.latent_learning.probe_target_keys = list(EXPERT_INPUT_KEYS)
+        self.ipmd.latent_learning.probe_hidden_dims = [256, 256]
+        self.ipmd.latent_learning.probe_activation = "elu"
+        self.ipmd.latent_learning.probe_lr = 3.0e-4
+        self.ipmd.latent_learning.probe_grad_clip_norm = 1.0
+        self.ipmd.latent_learning.probe_batch_size = 8192
 
-        # MI encoder (q(z|s) posterior)
-        self.ipmd.mi_loss_coeff = 1.0
+        # The current RLOpt IPMD implementation still trains the latent encoder
+        # through the MI objective, even when the higher-level latent_learning
+        # config is used to select keys and command sources.
+        self.ipmd.mi_loss_coeff = 0.0
         self.ipmd.mi_encoder_hidden_dims = [256, 256]
         self.ipmd.mi_encoder_activation = "elu"
         self.ipmd.mi_encoder_lr = 3.0e-4
@@ -146,9 +174,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.latent_input_type = "s"
         self.ipmd.env_reward_weight = 1.0
 
-        # MI reward: ASE-aligned hypersphere shift → reward ∈ [0, 1].
-        # Weight is applied at advantage level (mi_adv * mi_reward_weight added to
-        # main advantages), so 0.5 is appropriate for a [0, 1] reward signal.
+        # No MI reward path for the PPO + KL latent bottleneck variant.
         self.ipmd.mi_hypersphere_reward_shift = True
         self.ipmd.mi_reward_weight = 0.0
 
@@ -158,26 +184,33 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.mi_critic_lr = 3.0e-4
         self.ipmd.mi_critic_grad_clip_norm = 1.0
 
-        # Diversity bonus and latent uniformity
-        self.ipmd.diversity_bonus_coeff = 0.05
-        self.ipmd.diversity_target = 1.0
-        self.ipmd.latent_uniformity_coeff = 0.00
+        # Keep the low-level tracker objective to PPO + KL only.
+        self.ipmd.diversity_bonus_coeff = 0.0
+        self.ipmd.diversity_target = 0.0
+        self.ipmd.latent_uniformity_coeff = 0.0
         self.ipmd.latent_uniformity_temperature = 2.0
 
         self.ipmd.reward_input_type = "s"
-        self.ipmd.use_estimated_rewards_for_ppo = True
+        self.ipmd.use_estimated_rewards_for_ppo = False
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
         self.ipmd.bc_coef = 0.0
         self.compile.compile = False
         self.trainer.progress_bar = False
-        self.trainer.log_interval = 1_000_000
+        self.trainer.log_interval = 10_000_000
         self.ipmd.reward_output_scale = 0.25
         self.ipmd.estimated_reward_clamp_min = -0.25
         self.ipmd.estimated_reward_clamp_max = 0.25
         self.ipmd.est_reward_weight = 0.0
+        self.ipmd.reward_loss_coeff = 0.0
+        self.ipmd.reward_l2_coeff = 0.0
+        self.ipmd.reward_grad_penalty_coeff = 0.0
         self.collector.no_cuda_sync = True
-        self.log_level = "critical"
-        self.ipmd.reward_l2_coeff = 0.5
+
+        # Collector latents should consume the same observation-manager channel
+        # stored in the rollout TensorDict. Expert data enters through
+        # sample_expert_batch(...) during updates, not through live env getters.
+        if self._default_use_latent_command:
+            self.ipmd.command_source = "rollout_posterior"
 
 
 @configclass

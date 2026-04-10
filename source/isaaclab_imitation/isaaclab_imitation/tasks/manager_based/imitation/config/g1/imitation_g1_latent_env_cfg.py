@@ -12,10 +12,10 @@ from ... import mdp
 from .imitation_g1_env_cfg import (
     G1ObservationCfg,
     ImitationG1LafanTrackEnvCfg,
-    _g1_reference_anchor_obs_params,
-    _g1_reference_motion_obs_params,
-    _g1_tracked_body_obs_params,
     _g1_lafan_track_env_cfg_from_dict,
+    _g1_expert_anchor_obs_params,
+    _g1_expert_motion_obs_params,
+    _g1_tracked_body_obs_params,
 )
 
 
@@ -28,6 +28,16 @@ class G1LatentObservationCfg:
         """Policy observations."""
 
         latent_command = ObsTerm(func=mdp.agent_latent_command)
+        # baseline test
+        expert_motion = ObsTerm(
+            func=mdp.expert_motion_command,
+            params=_g1_expert_motion_obs_params(),
+        )
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_anchor_ori_b,
+            params=_g1_expert_anchor_obs_params(),
+            noise=Unoise(n_min=-0.05, n_max=0.05),
+        )
         projected_gravity = ObsTerm(
             func=mdp.projected_gravity,
             noise=Unoise(n_min=-0.05, n_max=0.05),
@@ -47,9 +57,11 @@ class G1LatentObservationCfg:
             func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2)
         )
         joint_pos_rel = ObsTerm(
-            func=mdp.joint_pos, noise=Unoise(n_min=-0.01, n_max=0.01)
+            func=mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01)
         )
-        joint_vel_rel = ObsTerm(func=mdp.joint_vel, noise=Unoise(n_min=-0.5, n_max=0.5))
+        joint_vel_rel = ObsTerm(
+            func=mdp.joint_vel_rel, noise=Unoise(n_min=-0.5, n_max=0.5)
+        )
         last_action = ObsTerm(func=mdp.last_action)
 
         def __post_init__(self):
@@ -61,17 +73,17 @@ class G1LatentObservationCfg:
         """Privileged critic observations."""
 
         latent_command = ObsTerm(func=mdp.agent_latent_command)
-        reference_motion = ObsTerm(
-            func=mdp.reference_motion_command,
-            params=_g1_reference_motion_obs_params(),
+        expert_motion = ObsTerm(
+            func=mdp.expert_motion_command,
+            params=_g1_expert_motion_obs_params(),
         )
-        reference_anchor_pos_b = ObsTerm(
-            func=mdp.reference_anchor_pos_b,
-            params=_g1_reference_anchor_obs_params(),
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
         )
-        reference_anchor_ori_b = ObsTerm(
-            func=mdp.reference_anchor_ori_b,
-            params=_g1_reference_anchor_obs_params(),
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_anchor_ori_b,
+            params=_g1_expert_anchor_obs_params(),
         )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
@@ -94,11 +106,13 @@ class G1LatentObservationCfg:
         def __post_init__(self):
             self.concatenate_terms = False
 
-    ReferenceCfg = G1ObservationCfg.ReferenceCfg
+    ExpertStateCfg = G1ObservationCfg.ExpertStateCfg
+    ExpertWindowCfg = G1ObservationCfg.ExpertWindowCfg
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
-    reference: ReferenceCfg = ReferenceCfg()
+    expert_state: ExpertStateCfg = ExpertStateCfg()
+    expert_window: ExpertWindowCfg = ExpertWindowCfg()
 
 
 @configclass
@@ -110,10 +124,15 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
 
     def __post_init__(self):
         super().__post_init__()
+        self.latent_patch_past_steps = 1
+        self.latent_patch_future_steps = 1
+        self.random_reset_step_min = 0
+        self.random_reset_step_max = 200
+        self._sync_expert_window_observation_params()
         # No reference-based terminations in latent mode
-        self.terminations.anchor_pos = None
-        self.terminations.anchor_ori = None
-        self.terminations.ee_body_pos = None
+        # self.terminations.anchor_pos = None
+        # self.terminations.anchor_ori = None
+        # self.terminations.ee_body_pos = None
 
 
 ImitationG1LatentEnvCfg.from_dict = _g1_lafan_track_env_cfg_from_dict
