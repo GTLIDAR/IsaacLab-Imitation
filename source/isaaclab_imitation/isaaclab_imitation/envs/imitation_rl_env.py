@@ -2161,7 +2161,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                         anchor_body_name="torso_link",
                     )
                 value = window_terms_cache[cache_key].get(term_name)
-            elif group_name in {"expert_state", ""}:
+            elif group_name in {"expert_state", "", "policy", "critic"}:
                 value = raw_state_terms.get(term_name)
                 if value is None and term_name in {
                     "expert_anchor_pos_b",

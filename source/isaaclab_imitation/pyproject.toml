@@ -17,15 +17,5 @@ search-path = [
     "../../../IsaacLab/source/isaaclab_rl",
     "../../../unitree_rl_lab/source/unitree_rl_lab",
     "../../../loco-mujoco/loco_mujoco",
-    # if the user prefers the submodule version of IsaacLab, they can use the following paths
-    "../../IsaacLab/source/isaaclab",
-    "../../IsaacLab/source/isaaclab_tasks",
-    "../../IsaacLab/source/isaaclab_assets",
-    "../../IsaacLab/source/isaaclab_mimic",
-    "../../IsaacLab/source/isaaclab_rl",
-    "../../IsaacLab/source/isaaclab_tasks",
-    "../../IsaacLab/source/isaaclab_assets",
-    "../../IsaacLab/source/isaaclab_mimic",
-    "../../IsaacLab/source/isaaclab_rl",
 ]
-disable-type-errors-in-ide = true
+disable-type-errors-in-ide = false

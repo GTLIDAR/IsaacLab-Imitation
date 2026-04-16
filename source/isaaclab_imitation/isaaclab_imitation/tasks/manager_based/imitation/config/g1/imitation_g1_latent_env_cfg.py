@@ -121,11 +121,14 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
 
     observations = G1LatentObservationCfg()
     enable_latent_command: bool = True
+    # Debug: publish the single-step vanilla tracker reference payload into
+    # latent_command: expert_motion (58) + expert_anchor_ori_b (6) = 64.
+    latent_command_dim: int = 32
 
     def __post_init__(self):
         super().__post_init__()
-        self.latent_patch_past_steps = 1
-        self.latent_patch_future_steps = 1
+        self.latent_patch_past_steps = 0
+        self.latent_patch_future_steps = 0
         self.random_reset_step_min = 0
         self.random_reset_step_max = 200
         self._sync_expert_window_observation_params()
