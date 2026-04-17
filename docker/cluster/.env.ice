@@ -1,0 +1,82 @@
+###
+# Cluster specific settings
+#
+# All CLUSTER_* paths are relative to $HOME on the cluster.
+# The scripts prepend $HOME automatically — do NOT use ~ or absolute paths.
+###
+
+# Job scheduler used by cluster.
+# Currently supports PBS and SLURM
+CLUSTER_JOB_SCHEDULER=SLURM
+# Docker cache dir for Isaac Sim (has to end on docker-isaac-sim)
+# e.g. scratch/docker-isaac-sim
+CLUSTER_ISAAC_SIM_CACHE_DIR=scratch/Research/IsaacLab/docker-isaac-sim
+# Isaac Lab directory on the cluster (has to end on isaaclab)
+# e.g. scratch/isaaclab
+CLUSTER_ISAACLAB_DIR=scratch/Research/IsaacLab/isaaclab
+# Cluster login
+CLUSTER_LOGIN=ice
+# Cluster scratch directory to store the SIF file
+# e.g. scratch
+CLUSTER_SIF_PATH=scratch/Research/IsaacLab/isaaclabsif
+# Host directory for datasets (must be on a filesystem with sufficient space)
+# This is bind-mounted into the container at /data
+CLUSTER_DATA_DIR=scratch/Research/IsaacLab/data
+# Auto-check and bootstrap the full G1 LAFAN1 dataset before each submitted job.
+CLUSTER_AUTO_SETUP_G1_DATA=1
+# Expected number of G1 motions in the full manifest.
+#CLUSTER_G1_EXPECTED_MOTION_COUNT=40
+# Override the full G1 dataset root used by the cluster preflight helper.
+# Defaults to ${CLUSTER_DATA_DIR}/lafan1.
+#CLUSTER_G1_DATA_ROOT=${CLUSTER_DATA_DIR}/lafan1
+# Override the Hugging Face dataset repo used when the cluster auto-downloads G1 NPZ motions.
+#CLUSTER_G1_REPO_ID=GeorgiaTech/g1_lafan1_50hz
+# Optional Hugging Face token for dataset download.
+# Prefer a file on the cluster host over storing the raw token in this file.
+# The token only needs `read` scope for dataset download.
+CLUSTER_HF_TOKEN_FILE=.hf_token
+#CLUSTER_HF_TOKEN=hf_xxx
+# Optional W&B token for training logs.
+# This file path is on the cluster host / compute node, not inside the container.
+# If unset, an existing WANDB_API_KEY environment variable is used if available.
+CLUSTER_WANDB_API_KEY_FILE=.wandb_api_key
+#CLUSTER_WANDB_API_KEY=xxxxxxxx
+# Append the full G1 manifest override to submitted jobs by default.
+# Disable this if you want to manage env.lafan1_manifest_path manually per job.
+#CLUSTER_APPEND_DEFAULT_G1_MANIFEST=1
+# Override the default full G1 manifest path appended to submitted jobs.
+# Defaults to ${CLUSTER_G1_DATA_ROOT}/manifests/g1_lafan1_manifest.json.
+# CLUSTER_G1_MANIFEST_PATH=${CLUSTER_DATA_DIR}/unitree/manifests/g1_unitree_dance102_manifest.json
+# Control whether cluster preflight rewrites CLUSTER_G1_MANIFEST_PATH.
+# auto: regenerate only if missing or stale relative to ${CLUSTER_G1_DATA_ROOT}/npz/g1
+# never: do not touch the manifest; useful for hand-authored or Unitree manifests
+# always: regenerate on every job
+CLUSTER_G1_MANIFEST_REFRESH_POLICY=never
+# Home directory path inside singularity container.
+# This path is backed by ${CLUSTER_ISAAC_SIM_CACHE_DIR}/home on scratch.
+#CLUSTER_CONTAINER_HOME=/home/hice1/fwu91
+# Remove the temporary isaaclab code copy after the job is done
+REMOVE_CODE_COPY_AFTER_JOB=true
+# Remove the temporary apptainer overlay after the job is done
+REMOVE_OVERLAY_AFTER_JOB=true
+# Python executable within Isaac Lab directory to run with the submitted job
+CLUSTER_PYTHON_EXECUTABLE=scripts/rlopt/train.py
+# Extra local repositories to sync on each job submission.
+# Format: "<local_abs_path>:<remote_subdir> <local_abs_path>:<remote_subdir>"
+# If unset, no extra overlay sync is done and the top-level repo's submodule state is used as-is.
+#CLUSTER_EXTRA_SYNC_SPECS="/path/to/IsaacLab:IsaacLab /path/to/RLOpt:RLOpt /path/to/ImitationLearningTools:ImitationLearningTools"
+# Prefer git clone/fetch checkout at the exact local HEAD commit.
+# For dirty repos, this also tries to apply local tracked edits (`git diff --binary HEAD`)
+# and copy untracked non-ignored files, then falls back to rsync if any git step fails.
+# Set to 0 to always use rsync.
+#CLUSTER_GIT_SYNC_FIRST=1
+# Optional per-repo local path overrides used when CLUSTER_EXTRA_SYNC_SPECS is unset.
+# Uncomment only the repos you want overlaid from local working trees.
+# Example: uncomment CLUSTER_RLOPT_LOCAL_PATH to sync your local RLOpt checkout and apply git diff/untracked files there.
+# These are paths on the submission machine (where cluster_interface.sh runs), not paths on the remote cluster.
+# CLUSTER_ISAACLAB_LOCAL_PATH=/home/fwu/Documents/Research/SkillLearning/IsaacLab
+CLUSTER_RLOPT_LOCAL_PATH=/home/fwu91/Documents/Research/SkillLearning/RLOpt
+# CLUSTER_IMITATION_TOOLS_LOCAL_PATH=/home/fwu/Documents/Research/SkillLearning/ImitationLearningTools
+# Extra PYTHONPATH entries inside container, relative to /workspace/isaaclab/project.
+# This should match the remote_subdir values above.
+CLUSTER_EXTRA_PYTHONPATH_REL=IsaacLab/source/isaaclab:IsaacLab/source/isaaclab_tasks:IsaacLab/source/isaaclab_assets:IsaacLab/source/isaaclab_rl:IsaacLab/source/isaaclab_mimic:source/isaaclab_imitation:unitree_rl_lab/source/unitree_rl_lab:RLOpt:ImitationLearningTools
