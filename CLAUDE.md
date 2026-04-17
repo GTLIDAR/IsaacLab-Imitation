@@ -12,6 +12,8 @@ Work primarily in files owned by this repo:
 
 Treat `IsaacLab/`, `RLOpt/`, and `ImitationLearningTools/` as **read-only dependencies**. Do not fix code inside them unless the task explicitly requires it; prefer wrappers, config, or documentation instead.
 
+For RLOpt specifically, do not edit the vendored submodule at `IsaacLab-Imitation/RLOpt/`. Use the installed sibling repo at `/home/fwu91/Documents/Research/SkillLearning/RLOpt` as the authoritative `rlopt` codebase, and do not add path overrides that force the submodule copy.
+
 ## Environment
 
 Always use the `SkillLearning` conda environment:

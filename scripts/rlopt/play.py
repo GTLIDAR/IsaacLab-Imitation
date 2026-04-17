@@ -1,4 +1,5 @@
 # Feiyang Wu (feiyangwu@gatech.edu)
+# ruff: noqa: E402
 
 """Script to play a checkpoint of an RLOpt agent (PPO, IPMD, ASE, etc.)."""
 
@@ -6,7 +7,6 @@
 
 import argparse
 import sys
-from pathlib import Path
 
 from isaaclab.app import AppLauncher
 

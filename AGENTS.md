@@ -7,6 +7,7 @@ This file defines how coding agents should work in the `IsaacLabImitation` works
 - This guidance is for the top-level `IsaacLabImitation` repo only.
 - Do not add or maintain agent guidance inside vendored submodules.
 - Treat `IsaacLab/`, `RLOpt/`, and `ImitationLearningTools/` as dependencies unless a task explicitly requires changes there.
+- Do not edit the vendored submodule at `IsaacLab-Imitation/RLOpt/`; for RLOpt work, use the sibling installed repo at `/home/fwu91/Documents/Research/SkillLearning/RLOpt`.
 - The workspace also expects the upstream `IsaacLab`, `unitree_rl_lab`, and `loco-mujoco` repositories to be available either as git submodules in this repo or as sibling checkouts next to it.
 - Prefer edits in files owned by this repo, especially:
   - `source/isaaclab_imitation/`
@@ -88,6 +89,7 @@ Use heavier training or playback commands only when the task requires them.
 ## Submodule Boundary
 
 - Do not “fix” code inside `IsaacLab/`, `RLOpt/`, or `ImitationLearningTools/` as part of routine top-level work.
+- For any `rlopt` Python import or code change, assume the sibling repo `../RLOpt` is authoritative and ignore the vendored `IsaacLab-Imitation/RLOpt` submodule.
 - If a top-level change depends on submodule behavior, first see whether the issue can be solved from this repo through config, wrappers, scripts, or documentation.
 - If a submodule edit is truly required, call it out explicitly in your summary.
 

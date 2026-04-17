@@ -2,6 +2,7 @@
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+# ruff: noqa: E402
 
 """Script to train RL agent with Stable Baselines3.
 
@@ -84,15 +85,12 @@ simulation_app = app_launcher.app
 import gymnasium as gym
 import numpy as np
 import os
-import random
 from datetime import datetime
 from stable_baselines3.common.vec_env import VecNormalize
 
 from isaaclab_rl.sb3 import process_sb3_cfg
-from isaaclab.envs.torchrl_env import IsaacLabManagerBasedEnv
 
 from isaaclab.envs import (
-    DirectMARLEnv,
     DirectMARLEnvCfg,
     DirectRLEnvCfg,
     ManagerBasedRLEnvCfg,
