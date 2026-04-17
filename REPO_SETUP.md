@@ -95,8 +95,16 @@ Typical flow:
 cd docker/cluster
 # edit .env.cluster for cluster paths/login/script
 bash cluster_interface.sh push base
-bash cluster_interface.sh job base --headless
+bash cluster_interface.sh job --task Isaac-Imitation-G1-Latent-v0 --algo IPMD --headless
 ```
+
+**Multiple clusters:** per-cluster env files and submit scripts are supported. Create `docker/cluster/.env.<name>` and optionally `docker/cluster/submit_job_slurm_<name>.sh`, then pass `-c <name>`:
+
+```bash
+bash cluster_interface.sh -c ice job --task Isaac-Imitation-G1-Latent-v0 --algo IPMD --headless
+```
+
+If no `-c` is given, the script auto-selects `submit_job_slurm_${CLUSTER_LOGIN}.sh` (from `.env.cluster`) when that file exists, falling back to `submit_job_slurm.sh`. See `docker/README.md` for full details.
 
 If your active development clone for `RLOpt` (or `IsaacLab`, `ImitationLearningTools`) is outside this repo, set path overrides in `docker/cluster/.env.cluster` so cluster jobs sync your working tree directly:
 
