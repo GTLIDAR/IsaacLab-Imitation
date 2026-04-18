@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import re
 import signal
 import sys
 import warnings
@@ -82,7 +83,17 @@ parser.add_argument(
     dest="algorithm",
     type=str.upper,
     default="PPO",
-    choices=["PPO", "SAC", "FASTSAC", "IPMD", "IPMD_SR", "IPMD_BILINEAR", "GAIL", "AMP", "ASE"],
+    choices=[
+        "PPO",
+        "SAC",
+        "FASTSAC",
+        "IPMD",
+        "IPMD_SR",
+        "IPMD_BILINEAR",
+        "GAIL",
+        "AMP",
+        "ASE",
+    ],
     help="RLOpt algorithm to train (must match the agent config).",
 )
 parser.add_argument(
@@ -137,6 +148,7 @@ import gymnasium as gym
 import isaaclab_imitation.tasks  # noqa: F401
 import isaaclab_tasks  # noqa: F401
 import numpy as np
+import wandb
 from isaaclab.envs import (
     DirectMARLEnv,
     DirectMARLEnvCfg,
@@ -175,6 +187,7 @@ warnings.filterwarnings(
 
 # import logger
 logger = logging.getLogger(__name__)
+logging.getLogger("iltools").setLevel(logging.WARNING)
 
 ALGORITHM_CLASS_MAP = {
     "PPO": PPO,
@@ -253,6 +266,113 @@ def _infer_render_fps(env: object, default_fps: int = 30) -> int:
             else:
                 stack.append(next_obj)
     return max(1, int(default_fps))
+
+
+def _enable_wandb_video_sync(
+    agent: object, *, video_folder: str, base_dir: str, period_samples: int
+):
+    """Enable WandB video sync and return a callable that logs newly completed videos."""
+    logger_obj = getattr(agent, "logger", None)
+    wandb_run = getattr(logger_obj, "experiment", None) if logger_obj else None
+    if (
+        wandb_run is None
+        or not hasattr(wandb_run, "save")
+        or not hasattr(wandb_run, "log")
+    ):
+        print("[INFO] WandB run not available; videos will remain local only.")
+        return None
+
+    video_pattern = os.path.join(video_folder, "*.mp4")
+    video_step_pattern = re.compile(r"step-(\d+)")
+    video_dir = Path(video_folder)
+    last_uploaded_name: str | None = None
+    next_video_step = 0
+
+    def _video_sort_key(path: Path) -> tuple[int, str]:
+        match = video_step_pattern.search(path.stem)
+        if match is not None:
+            return int(match.group(1)), path.name
+        return int(1e12), path.name
+
+    if video_dir.exists():
+        existing_videos = sorted(video_dir.glob("*.mp4"), key=_video_sort_key)
+        if len(existing_videos) > 0:
+            # Start from files created after the latest file seen at startup.
+            last_uploaded_name = existing_videos[-1].name
+            if period_samples > 0:
+                next_video_step = len(existing_videos) * period_samples
+
+    def _log_pending_videos(step_hint: int | None = None) -> None:
+        nonlocal last_uploaded_name
+        nonlocal next_video_step
+
+        if not video_dir.exists():
+            return
+
+        all_videos = sorted(video_dir.glob("*.mp4"), key=_video_sort_key)
+        if len(all_videos) == 0:
+            return
+
+        if last_uploaded_name is None:
+            new_videos = all_videos
+        else:
+            last_idx = next(
+                (i for i, p in enumerate(all_videos) if p.name == last_uploaded_name),
+                None,
+            )
+            if last_idx is None:
+                new_videos = all_videos
+            else:
+                new_videos = all_videos[last_idx + 1 :]
+
+        if len(new_videos) == 0:
+            return
+
+        uploads_this_call = 0
+        for video_path in new_videos:
+            try:
+                if video_path.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+
+            if period_samples > 0:
+                if step_hint is not None:
+                    next_video_step = max(next_video_step, int(step_hint))
+                video_step = int(next_video_step)
+            elif step_hint is not None:
+                video_step = int(step_hint)
+            else:
+                video_step = 0
+
+            try:
+                wandb_run.log(
+                    {
+                        "videos/train": wandb.Video(
+                            str(video_path),
+                            format="mp4",
+                        )
+                    },
+                    step=video_step,
+                )
+                uploads_this_call += 1
+                last_uploaded_name = video_path.name
+                if period_samples > 0:
+                    next_video_step += period_samples
+            except Exception:
+                # If a file is still being finalized, retry on the next periodic call.
+                continue
+
+            if uploads_this_call >= 2:
+                # Bound upload overhead per metrics call.
+                break
+
+    try:
+        # Keep local logging layout and stream only generated videos to WandB.
+        wandb_run.save(video_pattern, base_path=base_dir, policy="live")
+    except Exception as exc:
+        print(f"[WARNING] Failed to enable WandB video sync: {exc}")
+    return _log_pending_videos
 
 
 def resolve_agent_cfg_entry_point(
@@ -388,8 +508,9 @@ def main(
         )
     # wrap for video recording
     if args_cli.video:
+        video_folder = os.path.join(log_dir, "videos", "train")
         video_kwargs = {
-            "video_folder": os.path.join(log_dir, "videos", "train"),
+            "video_folder": video_folder,
             "step_trigger": lambda step: step % args_cli.video_interval == 0,
             "video_length": args_cli.video_length,
             "disable_logger": True,
@@ -420,6 +541,28 @@ def main(
         config=agent_cfg,  # type: ignore
     )
 
+    video_media_logger = None
+    if args_cli.video:
+        video_media_logger = _enable_wandb_video_sync(
+            agent,
+            video_folder=video_folder,
+            base_dir=log_dir,
+            period_samples=int(args_cli.video_interval) * int(env_cfg.scene.num_envs),
+        )
+        if video_media_logger is not None:
+            original_log_metrics = agent.log_metrics
+
+            def _log_metrics_with_video(*args, **kwargs):
+                step = kwargs.get("step")
+                try:
+                    step_hint = int(step) if step is not None else None
+                except Exception:
+                    step_hint = None
+                video_media_logger(step_hint)
+                return original_log_metrics(*args, **kwargs)
+
+            agent.log_metrics = _log_metrics_with_video
+
     if args_cli.checkpoint is not None:
         checkpoint_path = os.path.abspath(args_cli.checkpoint)
         print(f"[INFO] Loading checkpoint: {checkpoint_path}")
@@ -439,6 +582,8 @@ def main(
     except KeyboardInterrupt:
         print("\n[INFO] Training interrupted by user.")
     finally:
+        if video_media_logger is not None:
+            video_media_logger(None)
         env.close()
 
     print(f"Training time: {round(time.time() - start_time, 2)} seconds")
