@@ -9,8 +9,6 @@ set -e
 
 # get script directory
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-# Active cluster name (empty = use defaults: .env.cluster / submit_job_slurm.sh)
-CLUSTER_NAME=""
 # Resolved "<local_path>:<remote_subdir>" sync specs used by the current job submission.
 SYNC_EXTRA_REPO_SPECS=""
 CLUSTER_ISAACLAB_BASE_DIR=""
@@ -662,22 +660,10 @@ submit_job() {
 
     case $CLUSTER_JOB_SCHEDULER in
         "SLURM")
-            if [ -n "$CLUSTER_NAME" ] && [ -f "$SCRIPT_DIR/submit_job_slurm_${CLUSTER_NAME}.sh" ]; then
-                job_script_file="submit_job_slurm_${CLUSTER_NAME}.sh"
-            elif [ -n "${CLUSTER_LOGIN:-}" ] && [ -f "$SCRIPT_DIR/submit_job_slurm_${CLUSTER_LOGIN}.sh" ]; then
-                job_script_file="submit_job_slurm_${CLUSTER_LOGIN}.sh"
-            else
-                job_script_file=submit_job_slurm.sh
-            fi
+            job_script_file=submit_job_slurm.sh
             ;;
         "PBS")
-            if [ -n "$CLUSTER_NAME" ] && [ -f "$SCRIPT_DIR/submit_job_pbs_${CLUSTER_NAME}.sh" ]; then
-                job_script_file="submit_job_pbs_${CLUSTER_NAME}.sh"
-            elif [ -n "${CLUSTER_LOGIN:-}" ] && [ -f "$SCRIPT_DIR/submit_job_pbs_${CLUSTER_LOGIN}.sh" ]; then
-                job_script_file="submit_job_pbs_${CLUSTER_LOGIN}.sh"
-            else
-                job_script_file=submit_job_pbs.sh
-            fi
+            job_script_file=submit_job_pbs.sh
             ;;
         *)
             echo "[ERROR] Unsupported job scheduler specified: '$CLUSTER_JOB_SCHEDULER'. Supported options are: ['SLURM', 'PBS']"
@@ -748,10 +734,9 @@ sync_extra_repos() {
 #!/bin/bash
 
 help() {
-    echo -e "\nusage: $(basename "$0") [-h] [-c <cluster>] <command> [<profile>] [<job_args>...] -- Utility for interfacing between IsaacLab and compute clusters."
+    echo -e "\nusage: $(basename "$0") [-h] <command> [<profile>] [<job_args>...] -- Utility for interfacing between IsaacLab and compute clusters."
     echo -e "\noptions:"
     echo -e "  -h              Display this help message."
-    echo -e "  -c <cluster>    Select cluster profile. Sources .env.<cluster> and uses submit_job_slurm_<cluster>.sh if present; falls back to .env.cluster / submit_job_slurm.sh."
     echo -e "\ncommands:"
     echo -e "  push [<profile>]              Push the docker image to the cluster."
     echo -e "  job [<profile>] [<job_args>]  Submit a job to the cluster."
@@ -762,22 +747,14 @@ help() {
 }
 
 # Parse options
-while getopts ":hc:" opt; do
+while getopts ":h" opt; do
     case ${opt} in
         h )
             help
             exit 0
             ;;
-        c )
-            CLUSTER_NAME="$OPTARG"
-            ;;
         \? )
             echo "Invalid option: -$OPTARG" >&2
-            help
-            exit 1
-            ;;
-        : )
-            echo "Option -$OPTARG requires an argument." >&2
             help
             exit 1
             ;;
@@ -816,8 +793,7 @@ case $command in
         # Check docker and apptainer version
         check_docker_version
         # source env file to get cluster login and path information
-        _env_file="${CLUSTER_NAME:+.env.${CLUSTER_NAME}}"
-        source "$SCRIPT_DIR/${_env_file:-.env.cluster}"
+        source $SCRIPT_DIR/.env.cluster
         # Prepend remote $HOME to relative cluster paths.
         CLUSTER_REMOTE_HOME=$(ssh "$CLUSTER_LOGIN" 'echo $HOME')
         CLUSTER_SIF_PATH="$CLUSTER_REMOTE_HOME/$CLUSTER_SIF_PATH"
@@ -850,8 +826,7 @@ case $command in
         echo "[INFO] Executing job command"
         [ -n "$profile" ] && echo -e "\tUsing profile: $profile"
         [ -n "$job_args" ] && echo -e "\tJob arguments: $job_args"
-        _env_file="${CLUSTER_NAME:+.env.${CLUSTER_NAME}}"
-        source "$SCRIPT_DIR/${_env_file:-.env.cluster}"
+        source $SCRIPT_DIR/.env.cluster
         # Prepend remote $HOME to relative cluster paths.
         CLUSTER_REMOTE_HOME=$(ssh "$CLUSTER_LOGIN" 'echo $HOME')
         CLUSTER_ISAAC_SIM_CACHE_DIR="$CLUSTER_REMOTE_HOME/$CLUSTER_ISAAC_SIM_CACHE_DIR"

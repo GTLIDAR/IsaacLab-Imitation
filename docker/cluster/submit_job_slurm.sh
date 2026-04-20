@@ -13,14 +13,17 @@ printf -v quoted_job_args '%q ' "$@"
 cat <<EOT > job.sh
 #!/bin/bash
 
-#SBATCH --gpus-per-node=l40s:1
+#SBATCH --gpus-per-node=a40:1
 #SBATCH -N1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=6
 #SBATCH --mem-per-gpu=48G
 #SBATCH --time=16:00:00
 #SBATCH --job-name="training-$(date +"%Y-%m-%dT%H:%M")"
 #SBATCH --output="output_%j.log"
 #SBATCH --error="output_%j.log"
+#SBATCH --partition=wu-lab
+#SBATCH --nodelist=dendrite,synapse
+#SBATCH --qos=short
 
 # Pass the container profile first to run_singularity.sh, then all arguments intended for the executed script
 bash $quoted_run_singularity_path $quoted_workspace_root $quoted_container_profile $quoted_job_args
