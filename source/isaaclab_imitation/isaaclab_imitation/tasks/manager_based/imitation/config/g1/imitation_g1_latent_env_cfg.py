@@ -123,7 +123,7 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
     enable_latent_command: bool = True
     # Debug: publish the single-step vanilla tracker reference payload into
     # latent_command: expert_motion (58) + expert_anchor_ori_b (6) = 64.
-    latent_command_dim: int = 32
+    latent_command_dim: int = 64
 
     def __post_init__(self):
         super().__post_init__()

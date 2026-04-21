@@ -130,7 +130,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
 
         # Debug: latent posterior input mirrors the single-step vanilla tracker
         # policy reference payload directly: expert_motion (58) + anchor_ori (6).
-        self.ipmd.latent_dim = 32
+        self.ipmd.latent_dim = 64
         self.ipmd.latent_steps_min = 1
         self.ipmd.latent_steps_max = 1
         self.ipmd.latent_learning.method = "patch_autoencoder"
@@ -142,6 +142,8 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.latent_learning.patch_future_steps = 0
         self.ipmd.latent_learning.lr = 3.0e-4
         self.ipmd.latent_learning.grad_clip_norm = 1.0
+        self.ipmd.latent_learning.freeze_encoder = True
+        self.ipmd.latent_learning.train_posterior_through_policy = True
 
         # Debug mode still trains the autoencoder on expert reference patches,
         # but the live latent_command path publishes the raw posterior features
