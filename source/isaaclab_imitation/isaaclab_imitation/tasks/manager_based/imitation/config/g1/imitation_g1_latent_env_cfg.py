@@ -108,11 +108,13 @@ class G1LatentObservationCfg:
 
     ExpertStateCfg = G1ObservationCfg.ExpertStateCfg
     ExpertWindowCfg = G1ObservationCfg.ExpertWindowCfg
+    RewardInputCfg = G1ObservationCfg.RewardInputCfg
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     expert_state: ExpertStateCfg = ExpertStateCfg()
     expert_window: ExpertWindowCfg = ExpertWindowCfg()
+    reward_input: RewardInputCfg = RewardInputCfg()
 
 
 @configclass
@@ -131,6 +133,7 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
         self.latent_patch_future_steps = 0
         self.random_reset_step_min = 0
         self.random_reset_step_max = 200
+        self.random_reset_full_trajectory = False
         self._sync_expert_window_observation_params()
         # No reference-based terminations in latent mode
         # self.terminations.anchor_pos = None

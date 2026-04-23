@@ -5,7 +5,9 @@ from isaaclab_imitation.envs.rlopt import PPORLOptConfig
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
     ("policy", "expert_motion"),
+    ("policy", "expert_anchor_pos_b"),
     ("policy", "expert_anchor_ori_b"),
+    ("policy", "base_lin_vel"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -45,7 +47,7 @@ class G1ImitationRLOptPPOConfig(PPORLOptConfig):
         self.collector.frames_per_batch = 24
         self.replay_buffer.size = 4096 * 24
 
-        self.loss.epochs = 1
+        self.loss.epochs = 5
         self.loss.mini_batch_size = 4096 * 24 // 4
         self.loss.loss_critic_type = "l2"
 
@@ -69,7 +71,7 @@ class G1ImitationRLOptPPOConfig(PPORLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 30000 * 4096 * 24
-        self.save_interval = 5_000_000   # samples
+        self.save_interval = 5_000_000  # samples
         self.compile.compile = False
         self.collector.no_cuda_sync = True
         self.trainer.progress_bar = True

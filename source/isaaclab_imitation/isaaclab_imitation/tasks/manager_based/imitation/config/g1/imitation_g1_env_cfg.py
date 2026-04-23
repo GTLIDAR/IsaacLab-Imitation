@@ -175,10 +175,18 @@ class G1ObservationCfg:
             func=mdp.expert_motion_command,
             params=_g1_expert_motion_obs_params(),
         )
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
+            noise=Unoise(n_min=-0.25, n_max=0.25),
+        )
         expert_anchor_ori_b = ObsTerm(
             func=mdp.expert_anchor_ori_b,
             params=_g1_expert_anchor_obs_params(),
             noise=Unoise(n_min=-0.05, n_max=0.05),
+        )
+        base_lin_vel = ObsTerm(
+            func=mdp.base_lin_vel, noise=Unoise(n_min=-0.5, n_max=0.5)
         )
         base_ang_vel = ObsTerm(
             func=mdp.base_ang_vel, noise=Unoise(n_min=-0.2, n_max=0.2)
@@ -280,10 +288,36 @@ class G1ObservationCfg:
         def __post_init__(self):
             self.concatenate_terms = False
 
+    @configclass
+    class RewardInputCfg(ObsGroup):
+        """Inputs consumed by discriminator / reward estimator networks.
+
+        On rollout, terms are computed from the robot's actual state; on the
+        expert minibatch the env's expert-observation mapper returns the
+        idealized-expert counterpart (reference motion, zero anchor error).
+        """
+
+        expert_motion = ObsTerm(
+            func=mdp.robot_motion,
+            params=_g1_expert_motion_obs_params(),
+        )
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
+        )
+        expert_anchor_ori_b = ObsTerm(
+            func=mdp.expert_anchor_ori_b,
+            params=_g1_expert_anchor_obs_params(),
+        )
+
+        def __post_init__(self):
+            self.concatenate_terms = False
+
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     expert_state: ExpertStateCfg = ExpertStateCfg()
     expert_window: ExpertWindowCfg = ExpertWindowCfg()
+    reward_input: RewardInputCfg = RewardInputCfg()
 
 
 @configclass
@@ -343,21 +377,18 @@ class G1EventCfg:
         },
     )
 
-    # push_robot = EventTerm(
-    #     func=mdp.push_by_setting_velocity,
-    #     mode="interval",
-    #     interval_range_s=(1.0, 3.0),
-    #     params={"velocity_range": VELOCITY_RANGE},
-    # )
+    push_robot = EventTerm(
+        func=mdp.push_by_setting_velocity,
+        mode="interval",
+        interval_range_s=(1.0, 3.0),
+        params={"velocity_range": VELOCITY_RANGE},
+    )
 
 
 @configclass
 class G1RewardsCfg:
     """Reward terms aligned to the 29-DoF tracking environment."""
 
-    # -- base
-    joint_acc = RewTerm(func=mdp.joint_acc_l2, weight=-2.5e-7)
-    joint_torque = RewTerm(func=mdp.joint_torques_l2, weight=-1.0e-5)
     action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-1.0e-1)
     joint_limit = RewTerm(
         func=mdp.joint_pos_limits,
@@ -462,6 +493,7 @@ class G1TerminationsCfg:
     """Termination terms aligned to the 29-DoF tracking environment."""
 
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
+    reference_finished = DoneTerm(func=mdp.reference_trajectory_finished)
     anchor_pos = DoneTerm(
         func=mdp.bad_anchor_pos_z_only,
         params={
@@ -520,6 +552,9 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
     latent_patch_future_steps: int = 0
     random_reset_step_min: int = 0
     random_reset_step_max: int = 0
+    random_reset_full_trajectory: bool = False
+    adaptive_failure_reset_uniform_ratio: float = 0.1
+    adaptive_failure_reset_alpha: float = 0.001
 
     _debug_rewards: bool = False
 
@@ -554,7 +589,7 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
         self.scene.terrain.terrain_generator = None
 
         self.decimation = 4
-        self.episode_length_s = 30.0
+        self.episode_length_s = 10.0
         self.sim.dt = 0.005
         self.sim.render_interval = self.decimation
         self.sim.physics_material = self.scene.terrain.physics_material
@@ -579,9 +614,11 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
         if int(self.random_reset_step_min) < 0:
             raise ValueError("random_reset_step_min must be >= 0.")
         if int(self.random_reset_step_max) < int(self.random_reset_step_min):
-            raise ValueError(
-                "random_reset_step_max must be >= random_reset_step_min."
-            )
+            raise ValueError("random_reset_step_max must be >= random_reset_step_min.")
+        if float(self.adaptive_failure_reset_uniform_ratio) < 0.0:
+            raise ValueError("adaptive_failure_reset_uniform_ratio must be >= 0.")
+        if not 0.0 <= float(self.adaptive_failure_reset_alpha) <= 1.0:
+            raise ValueError("adaptive_failure_reset_alpha must be in [0, 1].")
 
         self._sync_expert_window_observation_params()
 
@@ -609,6 +646,7 @@ class ImitationG1LafanTrackEnvCfg(ImitationG1BaseTrackingEnvCfg):
     wrap_steps: bool = False
     reconstructed_reference_action: bool = True
     reconstructed_reference_action_mode = "next_pose"
+    random_reset_full_trajectory: bool = True
 
     def _apply_optional_hydra_overrides(self, data: Mapping) -> dict:
         """Apply optional top-level overrides before Isaac Lab's strict type updater.

@@ -268,9 +268,7 @@ def _infer_render_fps(env: object, default_fps: int = 30) -> int:
     return max(1, int(default_fps))
 
 
-def _enable_wandb_video_sync(
-    agent: object, *, video_folder: str, base_dir: str, period_samples: int
-):
+def _enable_wandb_video_sync(agent: object, *, video_folder: str, base_dir: str):
     """Enable WandB video sync and return a callable that logs newly completed videos."""
     logger_obj = getattr(agent, "logger", None)
     wandb_run = getattr(logger_obj, "experiment", None) if logger_obj else None
@@ -286,7 +284,9 @@ def _enable_wandb_video_sync(
     video_step_pattern = re.compile(r"step-(\d+)")
     video_dir = Path(video_folder)
     last_uploaded_name: str | None = None
-    next_video_step = 0
+    # Tracks the highest WandB step seen through training metrics. Videos are
+    # logged at this step so they cannot push WandB ahead of scalar metrics.
+    max_step_seen = 0
 
     def _video_sort_key(path: Path) -> tuple[int, str]:
         match = video_step_pattern.search(path.stem)
@@ -299,12 +299,9 @@ def _enable_wandb_video_sync(
         if len(existing_videos) > 0:
             # Start from files created after the latest file seen at startup.
             last_uploaded_name = existing_videos[-1].name
-            if period_samples > 0:
-                next_video_step = len(existing_videos) * period_samples
 
     def _log_pending_videos(step_hint: int | None = None) -> None:
-        nonlocal last_uploaded_name
-        nonlocal next_video_step
+        nonlocal last_uploaded_name, max_step_seen
 
         if not video_dir.exists():
             return
@@ -328,6 +325,13 @@ def _enable_wandb_video_sync(
         if len(new_videos) == 0:
             return
 
+        if step_hint is not None:
+            max_step_seen = max(max_step_seen, int(step_hint))
+
+        wandb_step = getattr(wandb_run, "step", None)
+        if wandb_step is not None:
+            max_step_seen = max(max_step_seen, int(wandb_step))
+
         uploads_this_call = 0
         for video_path in new_videos:
             try:
@@ -335,15 +339,6 @@ def _enable_wandb_video_sync(
                     continue
             except OSError:
                 continue
-
-            if period_samples > 0:
-                if step_hint is not None:
-                    next_video_step = max(next_video_step, int(step_hint))
-                video_step = int(next_video_step)
-            elif step_hint is not None:
-                video_step = int(step_hint)
-            else:
-                video_step = 0
 
             try:
                 wandb_run.log(
@@ -353,17 +348,15 @@ def _enable_wandb_video_sync(
                             format="mp4",
                         )
                     },
-                    step=video_step,
+                    step=max_step_seen,
                 )
                 uploads_this_call += 1
                 last_uploaded_name = video_path.name
-                if period_samples > 0:
-                    next_video_step += period_samples
             except Exception:
                 # If a file is still being finalized, retry on the next periodic call.
                 continue
 
-            if uploads_this_call >= 2:
+            if uploads_this_call >= 1:
                 # Bound upload overhead per metrics call.
                 break
 
@@ -547,7 +540,6 @@ def main(
             agent,
             video_folder=video_folder,
             base_dir=log_dir,
-            period_samples=int(args_cli.video_interval) * int(env_cfg.scene.num_envs),
         )
         if video_media_logger is not None:
             original_log_metrics = agent.log_metrics
@@ -558,8 +550,9 @@ def main(
                     step_hint = int(step) if step is not None else None
                 except Exception:
                     step_hint = None
+                result = original_log_metrics(*args, **kwargs)
                 video_media_logger(step_hint)
-                return original_log_metrics(*args, **kwargs)
+                return result
 
             agent.log_metrics = _log_metrics_with_video
 

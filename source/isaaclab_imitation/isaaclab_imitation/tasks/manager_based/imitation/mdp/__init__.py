@@ -23,6 +23,7 @@ from .observations import (
     expert_window_motion,
     robot_body_ori_b,
     robot_body_pos_b,
+    robot_motion,
 )
 from .rewards import (
     reference_global_anchor_orientation_error_exp,
@@ -49,6 +50,7 @@ from .terminations import (
     reference_joint_pos_deviation_too_much,
     reference_root_position_xy_deviation_too_much,
     reference_root_quat_deviation_too_much,
+    reference_trajectory_finished,
 )
 
 
@@ -81,6 +83,7 @@ __all__ = [
     "expert_window_anchor_ori_b",
     "robot_body_pos_b",
     "robot_body_ori_b",
+    "robot_motion",
     "expert_joint_pos",
     "expert_joint_vel",
     "expert_root_pos",
@@ -93,4 +96,5 @@ __all__ = [
     "reference_joint_pos_deviation_too_much",
     "reference_root_position_xy_deviation_too_much",
     "reference_root_quat_deviation_too_much",
+    "reference_trajectory_finished",
 ]

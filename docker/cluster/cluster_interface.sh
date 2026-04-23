@@ -635,7 +635,7 @@ record_repo_sync_manifest() {
         printf "repo_name\tremote_subdir\tlocal_path\thead_sha\tbranch\tstate\tchanged_files\n"
     } > "$manifest_local_file"
 
-    append_repo_manifest_entry "$manifest_local_file" "IsaacLabImitation" "$local_workspace_root" "."
+    append_repo_manifest_entry "$manifest_local_file" "IsaacLab-Imitation" "$local_workspace_root" "."
 
     for spec in $SYNC_EXTRA_REPO_SPECS; do
         local_path="${spec%%:*}"
@@ -711,7 +711,7 @@ sync_extra_repos() {
     SYNC_EXTRA_REPO_SPECS="$local_specs"
 
     if [ -z "$local_specs" ]; then
-        echo "[INFO] No extra repo overlays requested; using submodule state from IsaacLabImitation."
+        echo "[INFO] No extra repo overlays requested; using submodule state from IsaacLab-Imitation."
         return
     fi
 
@@ -849,7 +849,7 @@ case $command in
         ssh $CLUSTER_LOGIN "mkdir -p $CLUSTER_ISAACLAB_DIR"
         # Sync Isaac Lab imitation code
         echo "[INFO] Syncing IsaacLab-Imitation code..."
-        sync_repo_prefer_git_then_rsync "$local_workspace_root" "$CLUSTER_ISAACLAB_DIR" "IsaacLabImitation" "."
+        sync_repo_prefer_git_then_rsync "$local_workspace_root" "$CLUSTER_ISAACLAB_DIR" "IsaacLab-Imitation" "."
         # Sync optional extra repos only when explicitly requested via overrides/specs.
         sync_extra_repos
         # Record exact repo SHAs and dirty state used in this submission.
