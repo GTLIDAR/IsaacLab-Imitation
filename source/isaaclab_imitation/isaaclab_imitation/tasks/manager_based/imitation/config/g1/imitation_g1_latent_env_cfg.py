@@ -33,6 +33,11 @@ class G1LatentObservationCfg:
             func=mdp.expert_motion_command,
             params=_g1_expert_motion_obs_params(),
         )
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
+            noise=Unoise(n_min=-0.25, n_max=0.25),
+        )
         expert_anchor_ori_b = ObsTerm(
             func=mdp.expert_anchor_ori_b,
             params=_g1_expert_anchor_obs_params(),
