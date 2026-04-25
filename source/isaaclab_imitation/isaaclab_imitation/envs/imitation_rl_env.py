@@ -321,6 +321,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self.replay_only = getattr(cfg, "replay_only", False)
         if self.replay_only and not self.replay_reference:
             self.replay_reference = True
+        self._reference_replay_targets_enabled = False
+        self._reference_replay_source_env_ids: torch.Tensor | None = None
+        self._reference_replay_target_env_ids: torch.Tensor | None = None
         self._expert_sampler_warned_action_fallback = False
         self._expert_sampler_warned_unknown_terms: set[str] = set()
         self._reconstructed_reference_action_term: JointPositionAction | None = None
@@ -1607,6 +1610,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             if len(rollout_action_log) > 0 or len(rollout_state_log) > 0:
                 self.extras.setdefault("log", {}).update(rollout_action_log)
                 self.extras.setdefault("log", {}).update(rollout_state_log)
+            self._apply_reference_replay_targets()
             # self._update_reference_velocity_visualizer()
             return step_return
 
@@ -1808,6 +1812,106 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         return tm.env_step[
             env_ids.to(device=tm._state_device, dtype=torch.long)
         ].to(device=self.device, dtype=torch.long)
+
+    def configure_reference_replay_targets(
+        self,
+        *,
+        source_env_ids: Sequence[int] | torch.Tensor,
+        target_env_ids: Sequence[int] | torch.Tensor,
+    ) -> None:
+        """Configure target envs to replay the reference cursor of source envs."""
+
+        source_env_ids_t = torch.as_tensor(
+            source_env_ids, dtype=torch.long, device=self.device
+        ).reshape(-1)
+        target_env_ids_t = torch.as_tensor(
+            target_env_ids, dtype=torch.long, device=self.device
+        ).reshape(-1)
+        if source_env_ids_t.shape != target_env_ids_t.shape:
+            raise ValueError(
+                "source_env_ids and target_env_ids must have the same shape."
+            )
+
+        self._reference_replay_source_env_ids = source_env_ids_t
+        self._reference_replay_target_env_ids = target_env_ids_t
+        self._reference_replay_targets_enabled = True
+
+    def apply_reference_replay_targets(self) -> None:
+        """Public hook to synchronize and replay configured reference target envs."""
+
+        self._apply_reference_replay_targets()
+
+    def _apply_reference_replay_targets(self) -> None:
+        """Replay target envs from their paired source env trajectory cursors."""
+
+        if not self._reference_replay_targets_enabled:
+            return
+        if (
+            self._reference_replay_source_env_ids is None
+            or self._reference_replay_target_env_ids is None
+        ):
+            return
+
+        self.sync_reference_cursor_from_source_envs(
+            source_env_ids=self._reference_replay_source_env_ids,
+            target_env_ids=self._reference_replay_target_env_ids,
+        )
+        self._replay_reference(env_ids=self._reference_replay_target_env_ids)
+
+    def sync_reference_cursor_from_source_envs(
+        self,
+        *,
+        source_env_ids: Sequence[int] | torch.Tensor,
+        target_env_ids: Sequence[int] | torch.Tensor,
+    ) -> None:
+        """Copy trajectory cursor state from source envs to target envs."""
+
+        tm = self.trajectory_manager
+        source_env_ids_tm = torch.as_tensor(
+            source_env_ids, dtype=torch.long, device=tm._state_device
+        ).reshape(-1)
+        target_env_ids_tm = torch.as_tensor(
+            target_env_ids, dtype=torch.long, device=tm._state_device
+        ).reshape(-1)
+        if source_env_ids_tm.shape != target_env_ids_tm.shape:
+            raise ValueError(
+                "source_env_ids and target_env_ids must have the same shape."
+            )
+        if source_env_ids_tm.numel() == 0:
+            return
+
+        source_ranks = tm.env_traj_rank.index_select(0, source_env_ids_tm)
+        source_steps = tm.env_step.index_select(0, source_env_ids_tm)
+        tm.set_env_cursor(
+            env_ids=target_env_ids_tm,
+            ranks=source_ranks,
+            steps=source_steps,
+        )
+
+        source_env_ids = source_env_ids_tm.to(device=self.device)
+        target_env_ids = target_env_ids_tm.to(device=self.device)
+
+        self._reference_reset_root_pos.index_copy_(
+            0,
+            target_env_ids,
+            self._reference_reset_root_pos.index_select(0, source_env_ids),
+        )
+        self._reference_reset_root_quat.index_copy_(
+            0,
+            target_env_ids,
+            self._reference_reset_root_quat.index_select(0, source_env_ids),
+        )
+
+        self._refresh_current_expert_frame(target_env_ids, advance=False)
+
+        tracked_root_pos_w = self._get_tracked_reference_root_pos_w()
+        if tracked_root_pos_w is not None:
+            self._last_tracked_root_pos_w.index_copy_(
+                0,
+                target_env_ids,
+                tracked_root_pos_w.index_select(0, target_env_ids),
+            )
+            self._last_tracked_root_pos_valid.index_fill_(0, target_env_ids, True)
 
     def _sample_expert_window_slice(
         self,
