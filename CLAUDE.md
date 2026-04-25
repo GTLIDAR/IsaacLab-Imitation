@@ -1,22 +1,22 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) working in this repo.
 
 ## Scope
 
-Work primarily in files owned by this repo:
-- `source/isaaclab_imitation/` — the installable Isaac Lab extension
-- `scripts/` — training, playback, and data preparation entrypoints
+Work in repo-owned files:
+- `source/isaaclab_imitation/` — installable Isaac Lab extension
+- `scripts/` — training, playback, data prep entrypoints
 - `docker/` — cluster and container workflows
-- Top-level config files: `pyrefly.toml`, `.pre-commit-config.yaml`
+- Top-level configs: `pyrefly.toml`, `.pre-commit-config.yaml`
 
-Treat `IsaacLab/`, `RLOpt/`, and `ImitationLearningTools/` as **read-only dependencies**. Do not fix code inside them unless the task explicitly requires it; prefer wrappers, config, or documentation instead.
+Treat `IsaacLab/`, `RLOpt/`, `ImitationLearningTools/` as **read-only dependencies**. Don't fix code inside them unless task explicitly requires; prefer wrappers, config, or docs instead.
 
-For RLOpt specifically, do not edit the vendored submodule at `IsaacLab-Imitation/RLOpt/`. Use the installed sibling repo at `/home/fwu91/Documents/Research/SkillLearning/RLOpt` as the authoritative `rlopt` codebase, and do not add path overrides that force the submodule copy.
+For RLOpt: don't edit vendored submodule at `IsaacLab-Imitation/RLOpt/`. Use installed sibling repo at `/home/fwu91/Documents/Research/SkillLearning/RLOpt` as authoritative `rlopt` codebase. Don't add path overrides forcing submodule copy.
 
 ## Environment
 
-Always use the `SkillLearning` conda environment:
+Always use `SkillLearning` conda env:
 
 ```bash
 conda run -n SkillLearning <command>
@@ -68,7 +68,7 @@ conda run -n SkillLearning python scripts/rlopt/play.py \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
-Add `env.refresh_zarr_dataset=False` to reuse a cached Zarr dataset instead of rebuilding on startup.
+Add `env.refresh_zarr_dataset=False` to reuse cached Zarr dataset instead of rebuilding on startup.
 
 ## Architecture overview
 
@@ -92,10 +92,10 @@ isaaclab_imitation/
 
 ### Training flow
 
-1. `scripts/rlopt/train.py` parses `--task` and `--algo`, loads the registered env config and the corresponding `rlopt_<algo>_cfg_entry_point` from the gym registry.
-2. `ImitationRLEnv` (subclassing `ManagerBasedRLEnv`) is instantiated with the env config.
-3. `IsaacLabWrapper` wraps it for TorchRL. RLOpt drives the training loop.
-4. Motion data is loaded from a JSON manifest (`env.lafan1_manifest_path`), normalized by `lafan1_manifest.py`, and cached as a Zarr dataset at startup.
+1. `scripts/rlopt/train.py` parses `--task` and `--algo`, loads registered env config and corresponding `rlopt_<algo>_cfg_entry_point` from gym registry.
+2. `ImitationRLEnv` (subclassing `ManagerBasedRLEnv`) instantiated with env config.
+3. `IsaacLabWrapper` wraps for TorchRL. RLOpt drives training loop.
+4. Motion data loaded from JSON manifest (`env.lafan1_manifest_path`), normalized by `lafan1_manifest.py`, cached as Zarr dataset at startup.
 
 ### Task IDs
 
@@ -107,7 +107,7 @@ isaaclab_imitation/
 
 ### Data flow
 
-Motion data lives under `data/` (gitignored except manifests):
+Motion data in `data/` (gitignored except manifests):
 - `data/lafan1/npz/g1/` — converted NPZ files (30 Hz input, 50 Hz output)
 - `data/lafan1/manifests/g1_lafan1_manifest.json` — local manifest (not tracked)
 - `data/unitree/manifests/g1_unitree_dance102_manifest.json` — tracked, for quick tests
@@ -117,8 +117,8 @@ Each manifest entry requires `path` (or `file`) and `input_fps` fields.
 
 ## Key conventions
 
-- **Hydra overrides**: pass config overrides as positional CLI args after the script flags, e.g. `env.lafan1_manifest_path=...`, `ipmd.use_latent_command=False`.
-- **`--task`** selects the registered gym env; **`--algo`** selects the RLOpt agent config via `rlopt_<algo>_cfg_entry_point`.
-- **Type checking**: `pyrefly.toml` at the repo root configures search paths for `pyrefly`. Do not modify `pyrightconfig.json` or VS Code Pylance settings.
-- **Logs**: written under `logs/`; `outputs/` holds Hydra outputs. Both are gitignored.
-- **Cluster jobs**: managed via `docker/cluster/cluster_interface.sh`. See `REPO_SETUP.md` and `docker/cluster/.env.cluster` for env var configuration.
+- **Hydra overrides**: pass config overrides as positional CLI args after script flags, e.g. `env.lafan1_manifest_path=...`, `ipmd.use_latent_command=False`.
+- **`--task`** selects registered gym env; **`--algo`** selects RLOpt agent config via `rlopt_<algo>_cfg_entry_point`.
+- **Type checking**: `pyrefly.toml` at repo root configures search paths for `pyrefly`. Don't modify `pyrightconfig.json` or VS Code Pylance settings.
+- **Logs**: written under `logs/`; `outputs/` holds Hydra outputs. Both gitignored.
+- **Cluster jobs**: managed via `docker/cluster/cluster_interface.sh`. See `REPO_SETUP.md` and `docker/cluster/.env.cluster` for env var config.

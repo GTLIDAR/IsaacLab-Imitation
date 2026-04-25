@@ -219,12 +219,23 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             raise ValueError("latent patch window steps must be >= 0.")
         self._random_reset_step_min = int(getattr(cfg, "random_reset_step_min", 0))
         self._random_reset_step_max = int(getattr(cfg, "random_reset_step_max", 0))
+        self._random_reset_full_trajectory = bool(
+            getattr(cfg, "random_reset_full_trajectory", False)
+        )
+        self._adaptive_failure_reset_uniform_ratio = float(
+            getattr(cfg, "adaptive_failure_reset_uniform_ratio", 0.1)
+        )
+        self._adaptive_failure_reset_alpha = float(
+            getattr(cfg, "adaptive_failure_reset_alpha", 0.001)
+        )
         if self._random_reset_step_min < 0:
             raise ValueError("random_reset_step_min must be >= 0.")
         if self._random_reset_step_max < self._random_reset_step_min:
-            raise ValueError(
-                "random_reset_step_max must be >= random_reset_step_min."
-            )
+            raise ValueError("random_reset_step_max must be >= random_reset_step_min.")
+        if self._adaptive_failure_reset_uniform_ratio < 0.0:
+            raise ValueError("adaptive_failure_reset_uniform_ratio must be >= 0.")
+        if not 0.0 <= self._adaptive_failure_reset_alpha <= 1.0:
+            raise ValueError("adaptive_failure_reset_alpha must be in [0, 1].")
         reference_joint_names = list(getattr(cfg, "reference_joint_names", []))
         target_joint_names = list(getattr(cfg, "target_joint_names", []))
         dataset_joint_names = self._read_reference_joint_names_from_zarr(zarr_path)
@@ -279,11 +290,16 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             reference_joint_names=reference_joint_names,
             target_joint_names=target_joint_names,
         )
+        self._setup_adaptive_failure_reset_sampler(cfg)
 
         # Get initial reference data (this also initializes env assignments)
         self.current_expert_frame: TensorDict = self.trajectory_manager.sample(
             advance=False
         )
+        self._current_reference_local_step = self.trajectory_manager.env_step.to(
+            device=device, dtype=torch.long
+        ).clone()
+        self._build_reward_input_cache(device=torch.device(device))
         self._agent_latent_dim = int(getattr(cfg, "latent_command_dim", 16))
         self._agent_latent_command = torch.zeros(
             (num_envs, self._agent_latent_dim),
@@ -330,21 +346,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._reconstructed_reference_target_to_action_index: torch.Tensor | None = None
         self._reconstructed_reference_action_pd_ratio_target: torch.Tensor | None = None
 
-        # Store initial poses for replay
-        self._init_root_pos = torch.zeros((num_envs, 3), device=device)
-        self._init_root_quat = torch.zeros((num_envs, 4), device=device)
-        self._init_root_quat[:, 0] = 1.0
-        # Reference root pose at reset frame for each env.
-        # This aligns datasets whose xpos/xquat do not start near origin.
-        self._reference_reset_root_pos = torch.zeros((num_envs, 3), device=device)
-        self._reference_reset_root_quat = torch.zeros((num_envs, 4), device=device)
-        self._reference_reset_root_quat[:, 0] = 1.0
-        initial_reference_root_pos = self.current_expert_frame.get("root_pos")
-        initial_reference_root_quat = self.current_expert_frame.get("root_quat")
-        if initial_reference_root_pos is not None:
-            self._reference_reset_root_pos.copy_(initial_reference_root_pos)
-        if initial_reference_root_quat is not None:
-            self._reference_reset_root_quat.copy_(initial_reference_root_quat)
         self._load_reference_metadata(zarr_path)
 
         # Initialize parent class
@@ -358,7 +359,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._finalize_reference_body_names()
         self._initialize_mdp_fast_paths()
         self._setup_reference_velocity_visualizer()
-        self._update_reference_velocity_visualizer()
 
     @staticmethod
     def _read_reference_joint_names_from_zarr(zarr_path: Path) -> list[str]:
@@ -1300,8 +1300,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if motion_command is None:
             motion_command = torch.cat(
                 [
-                    self.current_expert_frame["joint_pos"].index_select(-1, joint_ids_t),
-                    self.current_expert_frame["joint_vel"].index_select(-1, joint_ids_t),
+                    self.current_expert_frame["joint_pos"].index_select(
+                        -1, joint_ids_t
+                    ),
+                    self.current_expert_frame["joint_vel"].index_select(
+                        -1, joint_ids_t
+                    ),
                 ],
                 dim=-1,
             )
@@ -1442,28 +1446,19 @@ class ImitationRLEnv(ManagerBasedRLEnv):
     def _get_reference_alignment_transform(
         self, env_ids: torch.Tensor | None = None
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Return per-env rigid transform from dataset world frame to simulation world frame.
-
-        Alignment is yaw-only (rotation around z-axis), to avoid injecting small roll/pitch
-        frame mismatches that can tilt reference motion upward/downward.
-        """
+        """Return Unitree-style fixed placement from dataset frame to sim world."""
+        env_origins = getattr(self, "_expert_env_origins", None)
+        if env_origins is None:
+            env_origins = self.scene.env_origins
         if env_ids is None:
-            init_pos = self._init_root_pos
-            init_quat = self._init_root_quat
-            ref_reset_pos = self._reference_reset_root_pos
-            ref_reset_quat = self._reference_reset_root_quat
+            align_pos = env_origins
         else:
-            init_pos = self._init_root_pos[env_ids]
-            init_quat = self._init_root_quat[env_ids]
-            ref_reset_pos = self._reference_reset_root_pos[env_ids]
-            ref_reset_quat = self._reference_reset_root_quat[env_ids]
+            align_pos = env_origins.index_select(
+                0, env_ids.to(device=env_origins.device, dtype=torch.long)
+            )
 
-        init_yaw_quat = math_utils.yaw_quat(init_quat)
-        ref_reset_yaw_quat = math_utils.yaw_quat(ref_reset_quat)
-        align_quat = math_utils.quat_mul(
-            init_yaw_quat, math_utils.quat_inv(ref_reset_yaw_quat)
-        )
-        align_pos = init_pos - math_utils.quat_apply(align_quat, ref_reset_pos)
+        align_quat = align_pos.new_zeros((align_pos.shape[0], 4))
+        align_quat[:, 0] = 1.0
         return align_quat, align_pos
 
     def _transform_reference_pose_to_world(
@@ -1472,7 +1467,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         ref_quat: torch.Tensor | None = None,
         env_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """Apply per-episode rigid transform from reference frame to world frame."""
+        """Place reference pose in simulation world using env origins."""
         align_quat, align_pos = self._get_reference_alignment_transform(env_ids)
 
         if ref_pos.ndim == 2:
@@ -1509,7 +1504,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         ref_quat: torch.Tensor | None = None,
         env_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """Map reference body pose with reset-time alignment so global motion is preserved."""
+        """Map reference body pose into the simulation world frame."""
         return self._transform_reference_pose_to_world(
             ref_pos, ref_quat, env_ids=env_ids
         )
@@ -1533,12 +1528,136 @@ class ImitationRLEnv(ManagerBasedRLEnv):
     def _refresh_current_expert_frame(
         self, env_ids: torch.Tensor | None = None, *, advance: bool = False
     ) -> None:
+        tm = self.trajectory_manager
+        if env_ids is None:
+            sampled_env_ids = torch.arange(
+                self.num_envs, device=tm._state_device, dtype=torch.long
+            )
+        else:
+            sampled_env_ids = env_ids.to(device=tm._state_device, dtype=torch.long)
+        sampled_local_steps = tm.env_step.index_select(0, sampled_env_ids)
         reference = self.trajectory_manager.sample(env_ids=env_ids, advance=advance)
         if env_ids is None or self.current_expert_frame is None:
             self.current_expert_frame = reference
+            self._current_reference_local_step.copy_(
+                sampled_local_steps.to(device=self.device, dtype=torch.long)
+            )
         else:
-            self._index_copy_reference_rows_(self.current_expert_frame, reference, env_ids)
+            self._index_copy_reference_rows_(
+                self.current_expert_frame, reference, env_ids
+            )
+            self._current_reference_local_step.index_copy_(
+                0,
+                env_ids.to(device=self.device, dtype=torch.long),
+                sampled_local_steps.to(device=self.device, dtype=torch.long),
+            )
         self._invalidate_mdp_cache()
+
+    def current_reference_is_final_frame(self) -> torch.Tensor:
+        """Return true for envs whose current reward/obs reference is terminal."""
+        tm = self.trajectory_manager
+        traj_ranks = tm.env_traj_rank.to(device=self.device, dtype=torch.long)
+        final_steps = (tm._length.index_select(0, traj_ranks) - 1).to(
+            device=self.device, dtype=torch.long
+        )
+        return self._current_reference_local_step >= final_steps
+
+    def _setup_adaptive_failure_reset_sampler(self, cfg: Any) -> None:
+        step_dt = float(getattr(cfg, "decimation", 1)) * float(cfg.sim.dt)
+        if step_dt <= 0.0:
+            raise ValueError("decimation * sim.dt must be > 0.")
+        steps_per_bin = max(int(round(1.0 / step_dt)), 1)
+        max_length = int(self.trajectory_manager._length.max().item())
+        bin_count = max(max_length // steps_per_bin + 1, 1)
+        self._adaptive_failure_reset_bin_count = bin_count
+        self._adaptive_failure_reset_bin_failed_count = torch.zeros(
+            bin_count,
+            device=self.trajectory_manager._state_device,
+            dtype=torch.float32,
+        )
+        self._adaptive_failure_reset_current_bin_failed = torch.zeros_like(
+            self._adaptive_failure_reset_bin_failed_count
+        )
+
+    def _reset_tracking_failure_mask(self) -> torch.Tensor:
+        failure_mask = torch.zeros(self.num_envs, device=self.device, dtype=torch.bool)
+        for term_name in self.termination_manager.active_terms:
+            term_cfg = self.termination_manager.get_term_cfg(term_name)
+            if term_cfg.time_out or term_name == "reference_finished":
+                continue
+            failure_mask |= self.termination_manager.get_term(term_name)
+        return failure_mask
+
+    def _record_adaptive_failure_reset_bins(self, env_ids: torch.Tensor) -> None:
+        tm = self.trajectory_manager
+        env_ids_device = env_ids.to(device=self.device, dtype=torch.long)
+        env_ids_tm = env_ids.to(device=tm._state_device, dtype=torch.long)
+        failed_mask = self._reset_tracking_failure_mask().index_select(
+            0, env_ids_device
+        )
+        failed_mask_tm = failed_mask.to(device=tm._state_device)
+
+        self._adaptive_failure_reset_current_bin_failed.zero_()
+        if torch.any(failed_mask):
+            failed_steps = self._current_reference_local_step.index_select(
+                0, env_ids_device
+            )[failed_mask].to(device=tm._state_device, dtype=torch.long)
+            failed_ranks = tm.env_traj_rank.index_select(0, env_ids_tm)[failed_mask_tm]
+            failed_denominator = (tm._length.index_select(0, failed_ranks) - 1).clamp(
+                min=1
+            )
+            failed_bins = torch.clamp(
+                torch.div(
+                    failed_steps * self._adaptive_failure_reset_bin_count,
+                    failed_denominator,
+                    rounding_mode="floor",
+                ),
+                0,
+                self._adaptive_failure_reset_bin_count - 1,
+            )
+            self._adaptive_failure_reset_current_bin_failed.copy_(
+                torch.bincount(
+                    failed_bins,
+                    minlength=self._adaptive_failure_reset_bin_count,
+                ).to(dtype=torch.float32)
+            )
+
+        self._adaptive_failure_reset_bin_failed_count.mul_(
+            1.0 - self._adaptive_failure_reset_alpha
+        ).add_(
+            self._adaptive_failure_reset_current_bin_failed,
+            alpha=self._adaptive_failure_reset_alpha,
+        )
+
+    def _sample_adaptive_failure_reset_steps(
+        self, env_ids: torch.Tensor
+    ) -> torch.Tensor:
+        tm = self.trajectory_manager
+        env_ids_tm = env_ids.to(device=tm._state_device, dtype=torch.long)
+        bin_count = self._adaptive_failure_reset_bin_count
+        sampling_probabilities = (
+            self._adaptive_failure_reset_bin_failed_count
+            + self._adaptive_failure_reset_uniform_ratio / float(bin_count)
+        )
+        sampling_probabilities = sampling_probabilities / sampling_probabilities.sum()
+        sampled_bins = torch.multinomial(
+            sampling_probabilities,
+            int(env_ids_tm.shape[0]),
+            replacement=True,
+        )
+        traj_ranks = tm.env_traj_rank.index_select(0, env_ids_tm)
+        max_exclusive = (tm._length.index_select(0, traj_ranks) - 1).clamp(min=1)
+        bin_offsets = torch.rand(
+            int(env_ids_tm.shape[0]),
+            device=tm._state_device,
+            dtype=torch.float32,
+        )
+        reset_steps = torch.floor(
+            (sampled_bins.to(dtype=torch.float32) + bin_offsets)
+            / float(bin_count)
+            * max_exclusive.to(dtype=torch.float32)
+        ).to(dtype=torch.long)
+        return reset_steps
 
     def _reset_idx(self, env_ids: torch.Tensor):
         """Reset the specified environments.
@@ -1552,7 +1671,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         # Reset trajectory tracking (reassigns trajectories and resets steps).
         reset_steps = None
-        if self._random_reset_step_max > self._random_reset_step_min:
+        if self._random_reset_full_trajectory:
+            self._record_adaptive_failure_reset_bins(env_ids)
+        if (
+            not self._random_reset_full_trajectory
+            and self._random_reset_step_max > self._random_reset_step_min
+        ):
             reset_steps = torch.randint(
                 low=self._random_reset_step_min,
                 high=self._random_reset_step_max + 1,
@@ -1561,6 +1685,11 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 dtype=torch.long,
             )
         self.trajectory_manager.reset_envs(env_ids.clone(), steps=reset_steps)
+        if self._random_reset_full_trajectory:
+            tm = self.trajectory_manager
+            env_ids_tm = env_ids.to(device=tm._state_device, dtype=torch.long)
+            reset_steps = self._sample_adaptive_failure_reset_steps(env_ids_tm)
+            tm._set_env_steps(env_ids_tm, reset_steps)
         self.reset_agent_latent_command(env_ids)
 
         # Refresh only the resetting rows before reset events consume current_expert_frame.
@@ -1569,21 +1698,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # Trigger the reset events (curriculum, sensors, managers, etc.) using tensor indices
         result = super()._reset_idx(env_ids)  # type: ignore[arg-type]
 
-        # Store initial poses for replay/alignment.
-        reset_root_state_w = self.robot.data.root_state_w.index_select(0, env_ids)
-        self._init_root_pos.index_copy_(0, env_ids, reset_root_state_w[:, 0:3])
-        self._init_root_quat.index_copy_(0, env_ids, reset_root_state_w[:, 3:7])
-
-        reference_root_pos = self.current_expert_frame.get("root_pos")
-        reference_root_quat = self.current_expert_frame.get("root_quat")
-        if reference_root_pos is not None:
-            self._reference_reset_root_pos.index_copy_(
-                0, env_ids, reference_root_pos.index_select(0, env_ids)
-            )
-        if reference_root_quat is not None:
-            self._reference_reset_root_quat.index_copy_(
-                0, env_ids, reference_root_quat.index_select(0, env_ids)
-            )
         if self.replay_reference:
             self._replay_reference(env_ids)
 
@@ -1605,14 +1719,25 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             rollout_action_log = self._compute_rollout_reference_action_log(
                 action.to(self.device)
             )
-            step_return = super().step(action)
+            super().step(action)
             rollout_state_log = self._compute_rollout_reference_state_log()
             if len(rollout_action_log) > 0 or len(rollout_state_log) > 0:
                 self.extras.setdefault("log", {}).update(rollout_action_log)
                 self.extras.setdefault("log", {}).update(rollout_state_log)
             self._apply_reference_replay_targets()
-            # self._update_reference_velocity_visualizer()
-            return step_return
+            # Match IsaacLab command timing: reward/logging use the pre-step
+            # reference frame, while returned observations expose the next frame.
+            # The pre-step sample already advanced the trajectory cursor, so this
+            # refresh must not advance again.
+            self._refresh_current_expert_frame(advance=False)
+            self.obs_buf = self.observation_manager.compute(update_history=True)
+            return (
+                self.obs_buf,
+                self.reward_buf,
+                self.reset_terminated,
+                self.reset_time_outs,
+                self.extras,
+            )
 
         # Replay-only path: ignore physics stepping and evaluate rewards exactly
         # on the replayed reference state.
@@ -1696,8 +1821,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         # -- compute observations
         # note: done after reset to get the correct observations for reset envs
         self.obs_buf = self.observation_manager.compute(update_history=True)
-        self._update_reference_velocity_visualizer()
-        self._update_env0_velocity_metrics()
         # return observations, rewards, resets and extras
         return (
             self.obs_buf,
@@ -1794,6 +1917,60 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             global_indices.to(self.device),
         )
 
+    def _build_reward_input_cache(self, *, device: torch.device) -> None:
+        """Pre-materialize expert-side values for the `reward_input` obs group.
+
+        Stores a flat [total_transitions, 2 * num_ref_joints] tensor for the
+        expert_motion term (joint_pos + joint_vel concatenated), plus two
+        broadcast buffers for the anchor-error terms that are zero / identity
+        on the expert side by construction.
+        """
+        tm = self.trajectory_manager
+        total = int(tm._end.max().item())
+        if total <= 0:
+            raise RuntimeError(
+                "Trajectory manager has no transitions; cannot build reward_input cache."
+            )
+        global_indices = torch.arange(
+            total, device=tm._storage_device, dtype=torch.int64
+        )
+        reference = tm.rb[global_indices]
+        if tm._device is not None:
+            reference = reference.to(tm._device)
+        reference = tm._attach_reference_fields(reference, use_buffers=False)
+        joint_pos = reference.get("joint_pos")
+        joint_vel = reference.get("joint_vel")
+        if joint_pos is None or joint_vel is None:
+            raise RuntimeError(
+                "reward_input cache build failed: trajectory manager did not produce joint_pos/joint_vel."
+            )
+        self._reward_input_motion_cache = torch.cat([joint_pos, joint_vel], dim=-1).to(
+            device=device
+        )
+        self._reward_input_zero_anchor_pos = torch.zeros(3, device=device)
+        identity = torch.zeros(6, device=device)
+        identity[0] = 1.0
+        identity[4] = 1.0
+        self._reward_input_identity_rot6d = identity
+
+    def _reward_input_expert_terms(
+        self,
+        global_indices: torch.Tensor,
+        batch_size: int,
+        term_name: str,
+    ) -> torch.Tensor | None:
+        """Return expert-side reward_input term values from the precomputed cache."""
+        if term_name == "expert_motion":
+            idx = global_indices.to(
+                device=self._reward_input_motion_cache.device, dtype=torch.int64
+            )
+            return self._reward_input_motion_cache.index_select(0, idx)
+        if term_name == "expert_anchor_pos_b":
+            return self._reward_input_zero_anchor_pos.expand(batch_size, 3)
+        if term_name == "expert_anchor_ori_b":
+            return self._reward_input_identity_rot6d.expand(batch_size, 6)
+        return None
+
     def _expert_local_steps_from_global_indices(
         self,
         env_ids: torch.Tensor,
@@ -1809,9 +1986,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
     def _current_local_steps(self, env_ids: torch.Tensor) -> torch.Tensor:
         tm = self.trajectory_manager
-        return tm.env_step[
-            env_ids.to(device=tm._state_device, dtype=torch.long)
-        ].to(device=self.device, dtype=torch.long)
+        return tm.env_step[env_ids.to(device=tm._state_device, dtype=torch.long)].to(
+            device=self.device, dtype=torch.long
+        )
 
     def configure_reference_replay_targets(
         self,
@@ -2094,13 +2271,17 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         joint_ids_t = self._get_joint_ids_tensor_fast(joint_ids)
         joint_pos = self._select_last_dim(expert_window["joint_pos"], joint_ids_t)
         joint_vel = self._select_last_dim(expert_window["joint_vel"], joint_ids_t)
-        expert_motion = torch.cat([joint_pos, joint_vel], dim=-1).reshape(batch_size, -1)
+        expert_motion = torch.cat([joint_pos, joint_vel], dim=-1).reshape(
+            batch_size, -1
+        )
 
         body_pos_source, body_quat_source, body_dim = self._expert_body_pose_fields(
             expert_window
         )
         anchor_ids = self._get_reference_body_ids_fast((anchor_body_name,))
-        anchor_pos = body_pos_source.index_select(body_dim, anchor_ids).squeeze(body_dim)
+        anchor_pos = body_pos_source.index_select(body_dim, anchor_ids).squeeze(
+            body_dim
+        )
         anchor_quat = body_quat_source.index_select(body_dim, anchor_ids).squeeze(
             body_dim
         )
@@ -2129,8 +2310,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 )
             anchor_pos_w = anchor_pos_w.reshape(batch_size, window_size, 3)
             anchor_quat_w = anchor_quat_w_opt.reshape(batch_size, window_size, 4)
-            robot_anchor_pos_w, robot_anchor_quat_w = self._get_robot_anchor_state_w_fast(
-                anchor_body_name
+            robot_anchor_pos_w, robot_anchor_quat_w = (
+                self._get_robot_anchor_state_w_fast(anchor_body_name)
             )
             robot_anchor_pos_w = robot_anchor_pos_w.index_select(0, env_ids)
             robot_anchor_quat_w = robot_anchor_quat_w.index_select(0, env_ids)
@@ -2220,21 +2401,34 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         context: str,
         prefix: tuple[str, ...] = (),
         local_steps: torch.Tensor | None = None,
+        global_indices: torch.Tensor | None = None,
         past_steps: int,
         future_steps: int,
     ) -> dict[NestedKey, torch.Tensor] | None:
         mapped_values: dict[NestedKey, torch.Tensor] = {}
         unknown_terms: list[str] = []
-        raw_state_terms = self._raw_expert_state_terms(expert_frame, env_ids, prefix=prefix)
+        raw_state_terms = self._raw_expert_state_terms(
+            expert_frame, env_ids, prefix=prefix
+        )
         anchor_terms_cache: dict[str, dict[str, torch.Tensor]] = {}
-        window_terms_cache: dict[tuple[int, int, str, object], dict[str, torch.Tensor]] = {}
+        window_terms_cache: dict[
+            tuple[int, int, str, object], dict[str, torch.Tensor]
+        ] = {}
+        batch_size = int(env_ids.shape[0])
 
         for obs_key in obs_keys:
             key_tuple = self._normalize_nested_key(obs_key)
             group_name = key_tuple[0] if len(key_tuple) > 1 else "expert_state"
             term_name = key_tuple[-1]
 
-            if group_name == "expert_window":
+            if group_name == "reward_input":
+                if context != "expert" or global_indices is None:
+                    unknown_terms.append(term_name)
+                    continue
+                value = self._reward_input_expert_terms(
+                    global_indices, batch_size=batch_size, term_name=term_name
+                )
+            elif group_name == "expert_window":
                 if len(prefix) > 0:
                     unknown_terms.append(term_name)
                     continue
@@ -2370,6 +2564,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 current_obs_keys,
                 context="expert",
                 local_steps=current_local_steps,
+                global_indices=current_global_indices,
                 past_steps=int(past_steps),
                 future_steps=int(future_steps),
             )
@@ -2379,14 +2574,16 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 expert_batch.set(key, value)
 
         if len(next_obs_keys) > 0:
+            next_global_indices: torch.Tensor | None
             if self._reference_has_aligned_next:
                 assert current_expert_frame is not None and current_env_ids is not None
                 next_expert_frame = current_expert_frame
                 next_env_ids = current_env_ids
+                next_global_indices = current_global_indices
                 next_prefix = ("next",)
             else:
-                next_expert_frame, next_env_ids, _ = self._sample_expert_trajectory_batch(
-                    batch_size
+                next_expert_frame, next_env_ids, next_global_indices = (
+                    self._sample_expert_trajectory_batch(batch_size)
                 )
                 next_prefix = ()
             mapped_next = self._map_requested_expert_observations(
@@ -2395,6 +2592,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 next_obs_keys,
                 context="expert",
                 prefix=next_prefix,
+                global_indices=next_global_indices,
                 past_steps=int(past_steps),
                 future_steps=int(future_steps),
             )
@@ -2415,7 +2613,10 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                     global_indices=current_global_indices,
                     env_ids=current_env_ids,
                 )
-            if current_expert_frame is not None and "action" in current_expert_frame.keys():
+            if (
+                current_expert_frame is not None
+                and "action" in current_expert_frame.keys()
+            ):
                 sampled_action = (
                     sampled_action
                     if sampled_action is not None
@@ -2469,7 +2670,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             defaults_vel = self.robot.data.default_joint_vel
         else:
             env_ids_tensor = env_ids
-            full_reference = self.current_expert_frame if reference is None else reference
+            full_reference = (
+                self.current_expert_frame if reference is None else reference
+            )
             ref = full_reference[env_ids_tensor]
             defaults_pos = self.robot.data.default_joint_pos[env_ids_tensor]
             defaults_vel = self.robot.data.default_joint_vel[env_ids_tensor]
@@ -2604,121 +2807,3 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             goal_body_marker = VisualizationMarkers(goal_body_cfg)
             goal_body_marker.set_visibility(True)
             self._goal_body_frame_markers.append(goal_body_marker)
-
-    def _update_reference_velocity_visualizer(self) -> None:
-        """Update marker pose/scale from current reference linear velocity."""
-        if not self._reference_vel_vis_enabled:
-            return
-        if self.current_expert_frame is None:
-            return
-        if not self.robot.is_initialized:
-            return
-
-        tracked_root_pos_w = self._get_tracked_reference_root_pos_w()
-
-        # Desired reference body (root) location and current robot root — frame markers like unitree_rl_lab
-        if (
-            self._goal_root_frame_marker is not None
-            and self._current_root_frame_marker is not None
-        ):
-            ref_root_pos_w = tracked_root_pos_w
-            align_quat, _ = self._get_reference_alignment_transform()
-            ref_root_quat_w = math_utils.quat_mul(
-                align_quat, self.current_expert_frame["root_quat"]
-            )
-            if ref_root_pos_w is not None:
-                self._goal_root_frame_marker.visualize(
-                    translations=ref_root_pos_w, orientations=ref_root_quat_w
-                )
-            self._current_root_frame_marker.visualize(
-                translations=self.robot.data.root_pos_w,
-                orientations=self.robot.data.root_quat_w,
-            )
-
-        if (
-            self._vis_reference_body_ids is not None
-            and self._vis_robot_body_ids is not None
-            and len(self._goal_body_frame_markers)
-            == len(self._current_body_frame_markers)
-            and len(self._goal_body_frame_markers) > 0
-        ):
-            reference_body_pos = None
-            reference_body_quat = None
-            try:
-                reference_body_pos = self.get_expert_trajectory_data("xpos")
-                reference_body_quat = self.get_expert_trajectory_data("xquat")
-            except KeyError:
-                pass
-
-            if reference_body_pos is not None:
-                ref_body_pos = reference_body_pos[..., self._vis_reference_body_ids, :]
-                if reference_body_quat is not None:
-                    ref_body_quat = reference_body_quat[
-                        ..., self._vis_reference_body_ids, :
-                    ]
-                else:
-                    # Keep position-only visualization alive when orientation keys are unavailable.
-                    ref_body_quat = torch.zeros(
-                        (*ref_body_pos.shape[:-1], 4), device=ref_body_pos.device
-                    )
-                    ref_body_quat[..., 0] = 1.0
-
-                ref_body_pos_w, ref_body_quat_w_opt = (
-                    self._transform_reference_body_pose_to_init_alignment(
-                        ref_body_pos, ref_body_quat
-                    )
-                )
-                if ref_body_quat_w_opt is None:
-                    return
-                ref_body_quat_w = ref_body_quat_w_opt
-                num_bodies = ref_body_pos.shape[1]
-
-                robot_body_pos_w = self.robot.data.body_pos_w[
-                    :, self._vis_robot_body_ids
-                ]
-                robot_body_quat_w = self.robot.data.body_quat_w[
-                    :, self._vis_robot_body_ids
-                ]
-
-                for body_index in range(num_bodies):
-                    self._current_body_frame_markers[body_index].visualize(
-                        robot_body_pos_w[:, body_index],
-                        robot_body_quat_w[:, body_index],
-                    )
-                    self._goal_body_frame_markers[body_index].visualize(
-                        ref_body_pos_w[:, body_index], ref_body_quat_w[:, body_index]
-                    )
-
-    def _update_env0_velocity_metrics(self) -> None:
-        """Expose env[0] velocity tracking metrics in extras for easy logging."""
-        if self.current_expert_frame is None or self.num_envs < 1:
-            return
-        reference_root_pos = self.current_expert_frame.get("root_pos")
-        if reference_root_pos is None:
-            return
-
-        reference_root_lin_vel_w = self._estimate_reference_root_lin_vel_w_from_pos(
-            reference_root_pos, update_cache=True
-        )
-        reference_vel_env0 = reference_root_lin_vel_w[0]
-        actual_vel_env0 = self.robot.data.root_lin_vel_w[0]
-        diff_vel_env0 = actual_vel_env0 - reference_vel_env0
-
-        self.extras["metrics/env0/reference_root_lin_vel_x"] = reference_vel_env0[
-            0
-        ].item()
-        self.extras["metrics/env0/reference_root_lin_vel_y"] = reference_vel_env0[
-            1
-        ].item()
-        self.extras["metrics/env0/reference_root_lin_vel_z"] = reference_vel_env0[
-            2
-        ].item()
-        self.extras["metrics/env0/actual_root_lin_vel_x"] = actual_vel_env0[0].item()
-        self.extras["metrics/env0/actual_root_lin_vel_y"] = actual_vel_env0[1].item()
-        self.extras["metrics/env0/actual_root_lin_vel_z"] = actual_vel_env0[2].item()
-        self.extras["metrics/env0/root_lin_vel_diff_x"] = diff_vel_env0[0].item()
-        self.extras["metrics/env0/root_lin_vel_diff_y"] = diff_vel_env0[1].item()
-        self.extras["metrics/env0/root_lin_vel_diff_z"] = diff_vel_env0[2].item()
-        self.extras["metrics/env0/root_lin_vel_diff_norm"] = torch.linalg.norm(
-            diff_vel_env0
-        ).item()

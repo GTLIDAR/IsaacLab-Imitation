@@ -4,6 +4,7 @@ from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
     ("policy", "expert_motion"),
+    ("policy", "expert_anchor_pos_b"),
     ("policy", "expert_anchor_ori_b"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
@@ -34,6 +35,7 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 
 LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
     ("policy", "expert_motion"),
+    ("policy", "expert_anchor_pos_b"),
     ("policy", "expert_anchor_ori_b"),
 ]
 
@@ -52,10 +54,10 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "last_action"),
 ]
 
-EXPERT_INPUT_KEYS: list[tuple[str, str]] = [
-    ("expert_state", "expert_motion"),
-    ("expert_state", "expert_anchor_pos_b"),
-    ("expert_state", "expert_anchor_ori_b"),
+REWARD_INPUT_KEYS: list[tuple[str, str]] = [
+    ("reward_input", "expert_motion"),
+    ("reward_input", "expert_anchor_pos_b"),
+    ("reward_input", "expert_anchor_ori_b"),
 ]
 
 
@@ -78,7 +80,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
                 if use_latent_command
                 else list(VANILLA_CRITIC_INPUT_KEYS)
             )
-        self.ipmd.reward_input_keys = list(EXPERT_INPUT_KEYS)
+        self.ipmd.reward_input_keys = list(REWARD_INPUT_KEYS)
         self.ipmd.latent_learning.posterior_input_keys = list(
             LATENT_POSTERIOR_INPUT_KEYS
         )
@@ -102,7 +104,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.collector.frames_per_batch = 24
         self.replay_buffer.size = 4096 * 24
 
-        self.loss.epochs = 1
+        self.loss.epochs = 5
         self.loss.mini_batch_size = 4096 * 24 // 4
         self.loss.loss_critic_type = "l2"
 
@@ -130,7 +132,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
 
         # Debug: latent posterior input mirrors the single-step vanilla tracker
         # policy reference payload directly: expert_motion (58) + anchor_ori (6).
-        self.ipmd.latent_dim = 32
+        self.ipmd.latent_dim = 64
         self.ipmd.latent_steps_min = 1
         self.ipmd.latent_steps_max = 1
         self.ipmd.latent_learning.method = "patch_autoencoder"
@@ -142,6 +144,8 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.latent_learning.patch_future_steps = 0
         self.ipmd.latent_learning.lr = 3.0e-4
         self.ipmd.latent_learning.grad_clip_norm = 1.0
+        self.ipmd.latent_learning.freeze_encoder = True
+        self.ipmd.latent_learning.train_posterior_through_policy = True
 
         # Debug mode still trains the autoencoder on expert reference patches,
         # but the live latent_command path publishes the raw posterior features
@@ -151,7 +155,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.latent_learning.kl_coeff = 0.0
         self.ipmd.latent_learning.probe_enabled = False
         self.ipmd.latent_learning.probe_condition_on_state = False
-        self.ipmd.latent_learning.probe_target_keys = list(EXPERT_INPUT_KEYS)
+        self.ipmd.latent_learning.probe_target_keys = list(REWARD_INPUT_KEYS)
         self.ipmd.latent_learning.probe_hidden_dims = [256, 256]
         self.ipmd.latent_learning.probe_activation = "elu"
         self.ipmd.latent_learning.probe_lr = 3.0e-4
@@ -171,11 +175,11 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.compile.compile = False
         # self.trainer.progress_bar = False
         # self.trainer.log_interval = 10_000_000
-        self.ipmd.reward_output_scale = 0.25
-        self.ipmd.estimated_reward_clamp_min = -0.25
-        self.ipmd.estimated_reward_clamp_max = 0.25
-        self.ipmd.est_reward_weight = 0.0
-        self.ipmd.reward_loss_coeff = 0.0
+        self.ipmd.reward_output_scale = 1.0
+        self.ipmd.estimated_reward_clamp_min = -1.0
+        self.ipmd.estimated_reward_clamp_max = 1.0
+        self.ipmd.est_reward_weight = 1.0
+        self.ipmd.reward_loss_coeff = 1.0
         self.ipmd.reward_l2_coeff = 0.0
         self.ipmd.reward_grad_penalty_coeff = 0.0
         self.collector.no_cuda_sync = True

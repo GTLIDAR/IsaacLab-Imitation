@@ -33,6 +33,11 @@ class G1LatentObservationCfg:
             func=mdp.expert_motion_command,
             params=_g1_expert_motion_obs_params(),
         )
+        expert_anchor_pos_b = ObsTerm(
+            func=mdp.expert_anchor_pos_b,
+            params=_g1_expert_anchor_obs_params(),
+            noise=Unoise(n_min=-0.25, n_max=0.25),
+        )
         expert_anchor_ori_b = ObsTerm(
             func=mdp.expert_anchor_ori_b,
             params=_g1_expert_anchor_obs_params(),
@@ -108,11 +113,13 @@ class G1LatentObservationCfg:
 
     ExpertStateCfg = G1ObservationCfg.ExpertStateCfg
     ExpertWindowCfg = G1ObservationCfg.ExpertWindowCfg
+    RewardInputCfg = G1ObservationCfg.RewardInputCfg
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     expert_state: ExpertStateCfg = ExpertStateCfg()
     expert_window: ExpertWindowCfg = ExpertWindowCfg()
+    reward_input: RewardInputCfg = RewardInputCfg()
 
 
 @configclass
@@ -123,7 +130,7 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
     enable_latent_command: bool = True
     # Debug: publish the single-step vanilla tracker reference payload into
     # latent_command: expert_motion (58) + expert_anchor_ori_b (6) = 64.
-    latent_command_dim: int = 32
+    latent_command_dim: int = 64
 
     def __post_init__(self):
         super().__post_init__()
@@ -131,6 +138,7 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
         self.latent_patch_future_steps = 0
         self.random_reset_step_min = 0
         self.random_reset_step_max = 200
+        self.random_reset_full_trajectory = False
         self._sync_expert_window_observation_params()
         # No reference-based terminations in latent mode
         # self.terminations.anchor_pos = None

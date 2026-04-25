@@ -111,3 +111,7 @@ def bad_reference_body_pos_z_only(
     return torch.any(
         torch.abs(ref_pos_w[..., 2] - actual_pos_w[..., 2]) > threshold, dim=1
     )
+
+
+def reference_trajectory_finished(env: ImitationRLEnv) -> torch.Tensor:
+    return env.current_reference_is_final_frame()

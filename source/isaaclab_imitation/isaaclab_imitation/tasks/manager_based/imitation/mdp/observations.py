@@ -62,6 +62,15 @@ def expert_motion_command(
     return env._get_expert_motion_command_fast(asset_cfg.joint_ids)
 
 
+def robot_motion(
+    env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    joint_ids = env._get_joint_ids_tensor_fast(asset_cfg.joint_ids)
+    joint_pos = _select_last_dim(env.robot.data.joint_pos, joint_ids)
+    joint_vel = _select_last_dim(env.robot.data.joint_vel, joint_ids)
+    return torch.cat([joint_pos, joint_vel], dim=-1)
+
+
 def agent_latent_command(
     env: ImitationRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:

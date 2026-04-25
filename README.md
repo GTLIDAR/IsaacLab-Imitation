@@ -174,6 +174,27 @@ env.refresh_zarr_dataset=False
 For manifest-driven G1 tasks, the cache path is derived from the resolved manifest path and contents, so LaFAN1 and
 Unitree manifests do not share the same Zarr dataset by default.
 
+Run the lightweight vanilla G1 IPMD training smoke routine:
+
+```bash
+scripts/rlopt/smoke_train_g1_ipmd.sh
+```
+
+This runs one 128-env rollout iteration on `data/lafan1/manifests/g1_lafan1_manifest_single.json`, rebuilds that
+single-manifest Zarr cache, and records a short local training video. It disables the metrics backend by default so it
+does not require W&B credentials. To test W&B video sync too, run:
+
+```bash
+LOGGER_BACKEND=wandb scripts/rlopt/smoke_train_g1_ipmd.sh
+```
+
+Useful overrides:
+
+```bash
+MAX_ITERATIONS=2 NUM_ENVS=256 MANIFEST=data/lafan1/manifests/g1_debug_manifest.json \
+    scripts/rlopt/smoke_train_g1_ipmd.sh
+```
+
 Train with RSL-RL:
 
 ```bash
@@ -435,21 +456,43 @@ Recommended tools:
 
 - `ruff` for linting and formatting
 - `pyrefly` for type and import checking
+- `pytest` for focused unit tests
 
-Install them into your environment or with `uv tool`:
+Use the `SkillLearning` conda environment for all checks. Prefer `conda run`
+for non-interactive commands so the repo uses the environment's Python and
+tooling.
+
+Install tools into that environment:
 
 ```bash
-uv tool install ruff
-uv tool install pyrefly
+conda run -n SkillLearning uv pip install --system ruff pyrefly pytest
 ```
 
 Useful commands:
 
 ```bash
-ruff check .
-ruff format .
-pyrefly check
+conda run -n SkillLearning ruff check .
+conda run -n SkillLearning ruff format --check .
+conda run -n SkillLearning pyrefly check
 ```
+
+Pure-Python pytest targets can run directly through the conda environment, for
+example:
+
+```bash
+conda run -n SkillLearning pytest source/isaaclab_imitation/test_reference_patch_env.py
+```
+
+Tests that import Isaac Lab or Omniverse modules need Isaac Sim's Python
+bootstrap before imports such as `pxr` are available. Run those tests through
+the Isaac Lab launcher. In the sibling-checkout layout:
+
+```bash
+TERM=xterm conda run -n SkillLearning ../IsaacLab/isaaclab.sh -p -m pytest source/isaaclab_imitation/test_reference_patch_env.py
+```
+
+If `IsaacLab` is checked out as an in-repo submodule, use
+`./IsaacLab/isaaclab.sh` instead.
 
 `pyrefly` is configured by [pyrefly.toml](pyrefly.toml) and already includes
 the import roots for this repo plus sibling/source dependencies such as `IsaacLab` and `unitree_rl_lab`.

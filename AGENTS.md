@@ -1,10 +1,10 @@
 # AGENTS.md
 
-This file defines how coding agents should work in the `IsaacLabImitation` workspace.
+This file defines how coding agents should work in the `IsaacLab-Imitation` workspace.
 
 ## Scope
 
-- This guidance is for the top-level `IsaacLabImitation` repo only.
+- This guidance is for the top-level `IsaacLab-Imitation` repo only.
 - Do not add or maintain agent guidance inside vendored submodules.
 - Treat `IsaacLab/`, `RLOpt/`, and `ImitationLearningTools/` as dependencies unless a task explicitly requires changes there.
 - Do not edit the vendored submodule at `IsaacLab-Imitation/RLOpt/`; for RLOpt work, use the sibling installed repo at `/home/fwu91/Documents/Research/SkillLearning/RLOpt`.
@@ -66,6 +66,24 @@ conda run -n SkillLearning ruff format --check .
 conda run -n SkillLearning pyrefly check
 ```
 
+Run pure-Python pytest targets through the `SkillLearning` environment, not as
+a bare `pytest` command. Prefer the smallest relevant target:
+
+```bash
+conda run -n SkillLearning pytest source/isaaclab_imitation/test_reference_patch_env.py
+```
+
+Tests that import Isaac Lab or Omniverse modules need Isaac Sim's Python
+bootstrap before imports such as `pxr` are available. Run those tests through
+the Isaac Lab launcher. In the sibling-checkout layout:
+
+```bash
+TERM=xterm conda run -n SkillLearning ../IsaacLab/isaaclab.sh -p -m pytest source/isaaclab_imitation/test_reference_patch_env.py
+```
+
+If `IsaacLab` is checked out as an in-repo submodule, use
+`./IsaacLab/isaaclab.sh` instead.
+
 If you changed formatting intentionally:
 
 ```bash
@@ -81,7 +99,7 @@ conda run -n SkillLearning ./scripts/install_workspace.sh
 For environment or training-entry changes, prefer a targeted smoke test over broad execution:
 
 ```bash
-conda run -n SkillLearning ./IsaacLab/isaaclab.sh -p scripts/zero_agent.py --task Isaac-Imitation-G1-LafanTrack-v0
+TERM=xterm conda run -n SkillLearning ../IsaacLab/isaaclab.sh -p scripts/zero_agent.py --task Isaac-Imitation-G1-LafanTrack-v0
 ```
 
 Use heavier training or playback commands only when the task requires them.
