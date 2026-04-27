@@ -13,8 +13,6 @@ from .imitation_g1_env_cfg import (
     G1ObservationCfg,
     ImitationG1LafanTrackEnvCfg,
     _g1_lafan_track_env_cfg_from_dict,
-    _g1_expert_anchor_obs_params,
-    _g1_expert_motion_obs_params,
     _g1_tracked_body_obs_params,
 )
 
@@ -27,22 +25,6 @@ class G1LatentObservationCfg:
     class PolicyCfg(ObsGroup):
         """Policy observations."""
 
-        latent_command = ObsTerm(func=mdp.agent_latent_command)
-        # baseline test
-        expert_motion = ObsTerm(
-            func=mdp.expert_motion_command,
-            params=_g1_expert_motion_obs_params(),
-        )
-        expert_anchor_pos_b = ObsTerm(
-            func=mdp.expert_anchor_pos_b,
-            params=_g1_expert_anchor_obs_params(),
-            noise=Unoise(n_min=-0.25, n_max=0.25),
-        )
-        expert_anchor_ori_b = ObsTerm(
-            func=mdp.expert_anchor_ori_b,
-            params=_g1_expert_anchor_obs_params(),
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-        )
         projected_gravity = ObsTerm(
             func=mdp.projected_gravity,
             noise=Unoise(n_min=-0.05, n_max=0.05),
@@ -77,19 +59,6 @@ class G1LatentObservationCfg:
     class CriticCfg(ObsGroup):
         """Privileged critic observations."""
 
-        latent_command = ObsTerm(func=mdp.agent_latent_command)
-        expert_motion = ObsTerm(
-            func=mdp.expert_motion_command,
-            params=_g1_expert_motion_obs_params(),
-        )
-        expert_anchor_pos_b = ObsTerm(
-            func=mdp.expert_anchor_pos_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
-        expert_anchor_ori_b = ObsTerm(
-            func=mdp.expert_anchor_ori_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
             params=_g1_tracked_body_obs_params(),
@@ -111,15 +80,17 @@ class G1LatentObservationCfg:
         def __post_init__(self):
             self.concatenate_terms = False
 
+    CommandCfg = G1ObservationCfg.CommandCfg
     ExpertStateCfg = G1ObservationCfg.ExpertStateCfg
     ExpertWindowCfg = G1ObservationCfg.ExpertWindowCfg
-    RewardInputCfg = G1ObservationCfg.RewardInputCfg
+    RewardStateCfg = G1ObservationCfg.RewardStateCfg
 
+    command: CommandCfg = CommandCfg()
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     expert_state: ExpertStateCfg = ExpertStateCfg()
     expert_window: ExpertWindowCfg = ExpertWindowCfg()
-    reward_input: RewardInputCfg = RewardInputCfg()
+    reward_state: RewardStateCfg = RewardStateCfg()
 
 
 @configclass
@@ -128,8 +99,7 @@ class ImitationG1LatentEnvCfg(ImitationG1LafanTrackEnvCfg):
 
     observations = G1LatentObservationCfg()
     enable_latent_command: bool = True
-    # Debug: publish the single-step vanilla tracker reference payload into
-    # latent_command: expert_motion (58) + expert_anchor_ori_b (6) = 64.
+    # Debug: policy_command is backed by the agent-published latent buffer.
     latent_command_dim: int = 64
 
     def __post_init__(self):

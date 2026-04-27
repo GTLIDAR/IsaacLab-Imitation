@@ -164,27 +164,56 @@ class G1ActionsCfg:
 
 
 @configclass
+class G1CommandsCfg:
+    """Env-owned command surfaces for G1 imitation."""
+
+    policy_command = mdp.ImitationEnvCommandCfg(getter_name="get_policy_command")
+    reference_command = mdp.ImitationEnvCommandCfg(getter_name="get_reference_command")
+    reference_motion = mdp.ImitationEnvCommandCfg(getter_name="get_reference_motion")
+    reference_anchor_pos_b = mdp.ImitationEnvCommandCfg(
+        getter_name="get_reference_anchor_pos_b"
+    )
+    reference_anchor_ori_b = mdp.ImitationEnvCommandCfg(
+        getter_name="get_reference_anchor_ori_b"
+    )
+
+
+@configclass
 class G1ObservationCfg:
     """Observation settings aligned with the 29-DoF tracking environment."""
+
+    @configclass
+    class CommandCfg(ObsGroup):
+        """Command observations exposed as semantic slices."""
+
+        policy_command = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "policy_command"},
+        )
+        reference_command = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "reference_command"},
+        )
+        reference_motion = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "reference_motion"},
+        )
+        reference_anchor_pos_b = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "reference_anchor_pos_b"},
+        )
+        reference_anchor_ori_b = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "reference_anchor_ori_b"},
+        )
+
+        def __post_init__(self):
+            self.concatenate_terms = False
 
     @configclass
     class PolicyCfg(ObsGroup):
         """Policy observations."""
 
-        expert_motion = ObsTerm(
-            func=mdp.expert_motion_command,
-            params=_g1_expert_motion_obs_params(),
-        )
-        expert_anchor_pos_b = ObsTerm(
-            func=mdp.expert_anchor_pos_b,
-            params=_g1_expert_anchor_obs_params(),
-            noise=Unoise(n_min=-0.25, n_max=0.25),
-        )
-        expert_anchor_ori_b = ObsTerm(
-            func=mdp.expert_anchor_ori_b,
-            params=_g1_expert_anchor_obs_params(),
-            noise=Unoise(n_min=-0.05, n_max=0.05),
-        )
         base_lin_vel = ObsTerm(
             func=mdp.base_lin_vel, noise=Unoise(n_min=-0.5, n_max=0.5)
         )
@@ -207,18 +236,6 @@ class G1ObservationCfg:
     class CriticCfg(ObsGroup):
         """Privileged critic observations."""
 
-        expert_motion = ObsTerm(
-            func=mdp.expert_motion_command,
-            params=_g1_expert_motion_obs_params(),
-        )
-        expert_anchor_pos_b = ObsTerm(
-            func=mdp.expert_anchor_pos_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
-        expert_anchor_ori_b = ObsTerm(
-            func=mdp.expert_anchor_ori_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
             params=_g1_tracked_body_obs_params(),
@@ -289,35 +306,35 @@ class G1ObservationCfg:
             self.concatenate_terms = False
 
     @configclass
-    class RewardInputCfg(ObsGroup):
-        """Inputs consumed by discriminator / reward estimator networks.
+    class RewardStateCfg(ObsGroup):
+        """Env-owned inverse-reward input state."""
 
-        On rollout, terms are computed from the robot's actual state; on the
-        expert minibatch the env's expert-observation mapper returns the
-        idealized-expert counterpart (reference motion, zero anchor error).
-        """
-
-        expert_motion = ObsTerm(
-            func=mdp.robot_motion,
+        reference_command = ObsTerm(
+            func=mdp.generated_commands,
+            params={"command_name": "reference_command"},
+        )
+        joint_pos = ObsTerm(
+            func=mdp.joint_pos,
             params=_g1_expert_motion_obs_params(),
         )
-        expert_anchor_pos_b = ObsTerm(
-            func=mdp.expert_anchor_pos_b,
-            params=_g1_expert_anchor_obs_params(),
+        joint_vel = ObsTerm(
+            func=mdp.joint_vel,
+            params=_g1_expert_motion_obs_params(),
         )
-        expert_anchor_ori_b = ObsTerm(
-            func=mdp.expert_anchor_ori_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
+        root_pos = ObsTerm(func=mdp.root_pos_w)
+        root_quat = ObsTerm(func=mdp.root_quat_w)
+        root_lin_vel = ObsTerm(func=mdp.root_lin_vel_w)
+        root_ang_vel = ObsTerm(func=mdp.root_ang_vel_w)
 
         def __post_init__(self):
             self.concatenate_terms = False
 
+    command: CommandCfg = CommandCfg()
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
     expert_state: ExpertStateCfg = ExpertStateCfg()
     expert_window: ExpertWindowCfg = ExpertWindowCfg()
-    reward_input: RewardInputCfg = RewardInputCfg()
+    reward_state: RewardStateCfg = RewardStateCfg()
 
 
 @configclass
@@ -537,6 +554,7 @@ class ImitationG1BaseTrackingEnvCfg(ImitationLearningEnvCfg):
     """Shared 29-DoF G1 tracking config aligned with Unitree mimic tracking settings."""
 
     actions = G1ActionsCfg()
+    commands = G1CommandsCfg()
     observations = G1ObservationCfg()
     rewards = G1RewardsCfg()  # type: ignore
     terminations = G1TerminationsCfg()  # type: ignore

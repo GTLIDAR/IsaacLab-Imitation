@@ -586,7 +586,7 @@ if __name__ == "__main__":
     try:
         # run the main function
         main()
-    except (KeyboardInterrupt, SystemExit):
+    except KeyboardInterrupt:
         pass
     finally:
         # close sim app

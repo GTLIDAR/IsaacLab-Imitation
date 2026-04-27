@@ -2,6 +2,7 @@
 
 from isaaclab.envs.mdp import *  # noqa: F401, F403
 
+from .commands import ImitationEnvCommandCfg
 from .events import (
     randomize_joint_default_pos,
     reset_joints_to_reference,
@@ -65,6 +66,7 @@ __all__ = [
     "track_root_ang",
     "track_root_lin_vel",
     "track_root_ang_vel",
+    "ImitationEnvCommandCfg",
     "reference_global_anchor_position_error_exp",
     "reference_global_anchor_orientation_error_exp",
     "reference_relative_body_position_error_exp",

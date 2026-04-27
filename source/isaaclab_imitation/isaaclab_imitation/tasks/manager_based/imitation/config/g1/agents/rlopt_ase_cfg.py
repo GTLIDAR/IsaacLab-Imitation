@@ -4,7 +4,7 @@ from rlopt.agent import ASERLOptConfig
 
 
 LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "latent_command"),
+    ("command", "policy_command"),
     ("policy", "projected_gravity"),
     ("policy", "body_pos"),
     ("policy", "body_ori"),
@@ -16,7 +16,7 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "latent_command"),
+    ("command", "policy_command"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "projected_gravity"),
@@ -105,7 +105,7 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.gail.amp_reward_scale = 1.0
 
         self.ase.latent_dim = 64
-        self.ase.latent_key = ("policy", "latent_command")
+        self.ase.latent_key = ("command", "policy_command")
         self.ase.latent_steps_min = 30
         self.ase.latent_steps_max = 120
         self.ase.command_source = "random"

@@ -4,8 +4,7 @@ from isaaclab_imitation.envs.rlopt import IPMDBilinearRLOptConfig
 
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "expert_motion"),
-    ("policy", "expert_anchor_ori_b"),
+    ("command", "policy_command"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -13,9 +12,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "expert_motion"),
-    ("critic", "expert_anchor_pos_b"),
-    ("critic", "expert_anchor_ori_b"),
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -26,7 +25,7 @@ VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "latent_command"),
+    ("command", "policy_command"),
     ("policy", "projected_gravity"),
     ("policy", "base_lin_vel"),
     ("policy", "base_ang_vel"),
@@ -36,10 +35,9 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "latent_command"),
-    ("critic", "expert_motion"),
-    ("critic", "expert_anchor_pos_b"),
-    ("critic", "expert_anchor_ori_b"),
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "projected_gravity"),
@@ -52,13 +50,20 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "last_action"),
 ]
 
-EXPERT_INPUT_KEYS: list[tuple[str, str]] = [
-    ("expert_state", "joint_pos"),
-    ("expert_state", "joint_vel"),
-    ("expert_state", "root_pos"),
-    ("expert_state", "root_quat"),
-    ("expert_state", "root_lin_vel"),
-    ("expert_state", "root_ang_vel"),
+LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
+]
+
+REWARD_INPUT_KEYS: list[tuple[str, str]] = [
+    ("reward_state", "reference_command"),
+    ("reward_state", "joint_pos"),
+    ("reward_state", "joint_vel"),
+    ("reward_state", "root_pos"),
+    ("reward_state", "root_quat"),
+    ("reward_state", "root_lin_vel"),
+    ("reward_state", "root_ang_vel"),
 ]
 
 
@@ -81,8 +86,11 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
                 if use_latent_command
                 else list(VANILLA_CRITIC_INPUT_KEYS)
             )
-        self.ipmd.reward_input_keys = list(EXPERT_INPUT_KEYS)
-        self.ipmd.latent_key = ("policy", "latent_command")
+        self.ipmd.reward_input_keys = list(REWARD_INPUT_KEYS)
+        self.ipmd.latent_learning.posterior_input_keys = list(
+            LATENT_POSTERIOR_INPUT_KEYS
+        )
+        self.ipmd.latent_key = ("command", "policy_command")
         self.ipmd.use_latent_command = use_latent_command
 
     def __post_init__(self):
@@ -150,7 +158,7 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.ipmd.diversity_target = 1.0
         self.ipmd.latent_uniformity_temperature = 2.0
 
-        self.ipmd.reward_input_type = "s'"
+        self.ipmd.reward_input_type = "s"
         self.ipmd.use_estimated_rewards_for_ppo = True
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
         self.ipmd.bc_coef = 0.0

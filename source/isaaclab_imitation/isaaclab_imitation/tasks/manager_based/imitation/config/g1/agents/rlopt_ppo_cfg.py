@@ -4,9 +4,7 @@ from isaaclab_imitation.envs.rlopt import PPORLOptConfig
 
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "expert_motion"),
-    ("policy", "expert_anchor_pos_b"),
-    ("policy", "expert_anchor_ori_b"),
+    ("command", "policy_command"),
     ("policy", "base_lin_vel"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
@@ -15,9 +13,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "expert_motion"),
-    ("critic", "expert_anchor_pos_b"),
-    ("critic", "expert_anchor_ori_b"),
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),

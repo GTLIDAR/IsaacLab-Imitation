@@ -299,7 +299,9 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._current_reference_local_step = self.trajectory_manager.env_step.to(
             device=device, dtype=torch.long
         ).clone()
-        self._build_reward_input_cache(device=torch.device(device))
+        self._policy_command_uses_latent = bool(
+            getattr(cfg, "enable_latent_command", False)
+        )
         self._agent_latent_dim = int(getattr(cfg, "latent_command_dim", 16))
         self._agent_latent_command = torch.zeros(
             (num_envs, self._agent_latent_dim),
@@ -912,6 +914,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None
         ) = None
         self._mdp_reference_cvel_cache: torch.Tensor | None = None
+        self._mdp_reference_command_cache: dict[str, torch.Tensor] | None = None
         self._mdp_expert_motion_cache: dict[tuple[int, ...], torch.Tensor] = {}
         self._mdp_expert_window_obs_cache: dict[
             tuple[int, int, str, object], dict[str, torch.Tensor]
@@ -994,6 +997,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._mdp_align_pos = None
         self._mdp_reference_root_cache = None
         self._mdp_reference_cvel_cache = None
+        self._mdp_reference_command_cache = None
         self._mdp_expert_motion_cache.clear()
         self._mdp_expert_window_obs_cache.clear()
         self._mdp_reference_body_pose_cache.clear()
@@ -1015,6 +1019,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._mdp_align_pos = align_pos
         self._mdp_reference_root_cache = None
         self._mdp_reference_cvel_cache = None
+        self._mdp_reference_command_cache = None
         self._mdp_expert_motion_cache.clear()
         self._mdp_expert_window_obs_cache.clear()
         self._mdp_reference_body_pose_cache.clear()
@@ -1308,6 +1313,59 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             )
             self._mdp_expert_motion_cache[cache_key] = motion_command
         return motion_command
+
+    def _current_reference_command_term(
+        self, term_name: str, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        if self.current_expert_frame is None:
+            raise RuntimeError("No reference data available. Call reset() first.")
+        self._ensure_mdp_step_cache()
+        if self._mdp_reference_command_cache is None:
+            all_env_ids = torch.arange(
+                self.num_envs, device=self.device, dtype=torch.long
+            )
+            self._mdp_reference_command_cache = self._reference_command_terms(
+                self.current_expert_frame,
+                all_env_ids,
+                context="rollout",
+            )
+        value = self._mdp_reference_command_cache[term_name]
+        if env_ids is None:
+            return value
+        env_ids = env_ids.to(device=self.device, dtype=torch.long)
+        return value.index_select(0, env_ids)
+
+    def get_reference_motion(
+        self, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Return frame-t reference joint position/velocity command."""
+        return self._current_reference_command_term("reference_motion", env_ids)
+
+    def get_reference_anchor_pos_b(
+        self, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Return frame-t reference anchor position in the robot anchor frame."""
+        return self._current_reference_command_term("reference_anchor_pos_b", env_ids)
+
+    def get_reference_anchor_ori_b(
+        self, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Return frame-t reference anchor orientation in the robot anchor frame."""
+        return self._current_reference_command_term("reference_anchor_ori_b", env_ids)
+
+    def get_reference_command(
+        self, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Return the full frame-t expert goal payload."""
+        return self._current_reference_command_term("reference_command", env_ids)
+
+    def get_policy_command(
+        self, env_ids: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        """Return the command currently visible to the policy."""
+        if self._policy_command_uses_latent:
+            return self.get_agent_latent_command(env_ids=env_ids)
+        return self.get_reference_command(env_ids=env_ids)
 
     def get_agent_latent_command(
         self, env_ids: torch.Tensor | None = None
@@ -1913,60 +1971,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             global_indices.to(self.device),
         )
 
-    def _build_reward_input_cache(self, *, device: torch.device) -> None:
-        """Pre-materialize expert-side values for the `reward_input` obs group.
-
-        Stores a flat [total_transitions, 2 * num_ref_joints] tensor for the
-        expert_motion term (joint_pos + joint_vel concatenated), plus two
-        broadcast buffers for the anchor-error terms that are zero / identity
-        on the expert side by construction.
-        """
-        tm = self.trajectory_manager
-        total = int(tm._end.max().item())
-        if total <= 0:
-            raise RuntimeError(
-                "Trajectory manager has no transitions; cannot build reward_input cache."
-            )
-        global_indices = torch.arange(
-            total, device=tm._storage_device, dtype=torch.int64
-        )
-        reference = tm.rb[global_indices]
-        if tm._device is not None:
-            reference = reference.to(tm._device)
-        reference = tm._attach_reference_fields(reference, use_buffers=False)
-        joint_pos = reference.get("joint_pos")
-        joint_vel = reference.get("joint_vel")
-        if joint_pos is None or joint_vel is None:
-            raise RuntimeError(
-                "reward_input cache build failed: trajectory manager did not produce joint_pos/joint_vel."
-            )
-        self._reward_input_motion_cache = torch.cat([joint_pos, joint_vel], dim=-1).to(
-            device=device
-        )
-        self._reward_input_zero_anchor_pos = torch.zeros(3, device=device)
-        identity = torch.zeros(6, device=device)
-        identity[0] = 1.0
-        identity[4] = 1.0
-        self._reward_input_identity_rot6d = identity
-
-    def _reward_input_expert_terms(
-        self,
-        global_indices: torch.Tensor,
-        batch_size: int,
-        term_name: str,
-    ) -> torch.Tensor | None:
-        """Return expert-side reward_input term values from the precomputed cache."""
-        if term_name == "expert_motion":
-            idx = global_indices.to(
-                device=self._reward_input_motion_cache.device, dtype=torch.int64
-            )
-            return self._reward_input_motion_cache.index_select(0, idx)
-        if term_name == "expert_anchor_pos_b":
-            return self._reward_input_zero_anchor_pos.expand(batch_size, 3)
-        if term_name == "expert_anchor_ori_b":
-            return self._reward_input_identity_rot6d.expand(batch_size, 6)
-        return None
-
     def _expert_local_steps_from_global_indices(
         self,
         env_ids: torch.Tensor,
@@ -2144,12 +2148,46 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         anchor_pos_b, anchor_ori_b = compiled.body_pose_in_anchor_frame(
             robot_anchor_pos_w,
             robot_anchor_quat_w,
-            expert_anchor_pos_w,
-            expert_anchor_quat_w_opt,
+            expert_anchor_pos_w[:, None, :],
+            expert_anchor_quat_w_opt[:, None, :],
         )
         return {
             "expert_anchor_pos_b": anchor_pos_b[:, 0, :],
             "expert_anchor_ori_b": compiled.quat_to_rot6d_flat(anchor_ori_b[:, 0, :]),
+        }
+
+    def _reference_command_terms(
+        self,
+        expert_frame: TensorDict,
+        env_ids: torch.Tensor,
+        *,
+        context: str,
+        prefix: tuple[str, ...] = (),
+    ) -> dict[str, torch.Tensor]:
+        raw_state_terms = self._raw_expert_state_terms(
+            expert_frame, env_ids, prefix=prefix
+        )
+        anchor_terms = self._expert_anchor_terms(
+            expert_frame,
+            env_ids,
+            context=context,
+            anchor_body_name="torso_link",
+        )
+        reference_motion = raw_state_terms["expert_motion"]
+        reference_anchor_pos_b = anchor_terms["expert_anchor_pos_b"]
+        reference_anchor_ori_b = anchor_terms["expert_anchor_ori_b"]
+        return {
+            "reference_motion": reference_motion,
+            "reference_anchor_pos_b": reference_anchor_pos_b,
+            "reference_anchor_ori_b": reference_anchor_ori_b,
+            "reference_command": torch.cat(
+                [
+                    reference_motion,
+                    reference_anchor_pos_b,
+                    reference_anchor_ori_b,
+                ],
+                dim=-1,
+            ),
         }
 
     def _build_expert_window_terms(
@@ -2297,7 +2335,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         context: str,
         prefix: tuple[str, ...] = (),
         local_steps: torch.Tensor | None = None,
-        global_indices: torch.Tensor | None = None,
         past_steps: int,
         future_steps: int,
     ) -> dict[NestedKey, torch.Tensor] | None:
@@ -2307,23 +2344,44 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             expert_frame, env_ids, prefix=prefix
         )
         anchor_terms_cache: dict[str, dict[str, torch.Tensor]] = {}
+        reference_terms_cache: dict[str, torch.Tensor] | None = None
         window_terms_cache: dict[
             tuple[int, int, str, object], dict[str, torch.Tensor]
         ] = {}
-        batch_size = int(env_ids.shape[0])
 
         for obs_key in obs_keys:
             key_tuple = self._normalize_nested_key(obs_key)
             group_name = key_tuple[0] if len(key_tuple) > 1 else "expert_state"
             term_name = key_tuple[-1]
 
-            if group_name == "reward_input":
-                if context != "expert" or global_indices is None:
-                    unknown_terms.append(term_name)
-                    continue
-                value = self._reward_input_expert_terms(
-                    global_indices, batch_size=batch_size, term_name=term_name
-                )
+            if group_name == "command":
+                if reference_terms_cache is None:
+                    reference_terms_cache = self._reference_command_terms(
+                        expert_frame,
+                        env_ids,
+                        context=context,
+                        prefix=prefix,
+                    )
+                if term_name == "policy_command":
+                    value = (
+                        None
+                        if self._policy_command_uses_latent
+                        else reference_terms_cache["reference_command"]
+                    )
+                else:
+                    value = reference_terms_cache.get(term_name)
+            elif group_name == "reward_state":
+                if term_name == "reference_command":
+                    if reference_terms_cache is None:
+                        reference_terms_cache = self._reference_command_terms(
+                            expert_frame,
+                            env_ids,
+                            context=context,
+                            prefix=prefix,
+                        )
+                    value = reference_terms_cache["reference_command"]
+                else:
+                    value = raw_state_terms.get(term_name)
             elif group_name == "expert_window":
                 if len(prefix) > 0:
                     unknown_terms.append(term_name)
@@ -2355,7 +2413,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                         anchor_body_name="torso_link",
                     )
                 value = window_terms_cache[cache_key].get(term_name)
-            elif group_name in {"expert_state", "", "policy", "critic"}:
+            elif group_name in {
+                "expert_state",
+                "",
+                "policy",
+                "critic",
+            }:
                 value = raw_state_terms.get(term_name)
                 if value is None and term_name in {
                     "expert_anchor_pos_b",
@@ -2460,7 +2523,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 current_obs_keys,
                 context="expert",
                 local_steps=current_local_steps,
-                global_indices=current_global_indices,
                 past_steps=int(past_steps),
                 future_steps=int(future_steps),
             )
@@ -2470,16 +2532,14 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 expert_batch.set(key, value)
 
         if len(next_obs_keys) > 0:
-            next_global_indices: torch.Tensor | None
             if self._reference_has_aligned_next:
                 assert current_expert_frame is not None and current_env_ids is not None
                 next_expert_frame = current_expert_frame
                 next_env_ids = current_env_ids
-                next_global_indices = current_global_indices
                 next_prefix = ("next",)
             else:
-                next_expert_frame, next_env_ids, next_global_indices = (
-                    self._sample_expert_trajectory_batch(batch_size)
+                next_expert_frame, next_env_ids, _ = self._sample_expert_trajectory_batch(
+                    batch_size
                 )
                 next_prefix = ()
             mapped_next = self._map_requested_expert_observations(
@@ -2488,7 +2548,6 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 next_obs_keys,
                 context="expert",
                 prefix=next_prefix,
-                global_indices=next_global_indices,
                 past_steps=int(past_steps),
                 future_steps=int(future_steps),
             )

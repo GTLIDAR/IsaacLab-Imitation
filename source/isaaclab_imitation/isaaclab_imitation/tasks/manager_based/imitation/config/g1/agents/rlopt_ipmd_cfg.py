@@ -3,9 +3,7 @@ from isaaclab.utils import configclass
 from isaaclab_imitation.envs.rlopt import IPMDRLOptConfig
 
 VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "expert_motion"),
-    ("policy", "expert_anchor_pos_b"),
-    ("policy", "expert_anchor_ori_b"),
+    ("command", "policy_command"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -13,9 +11,9 @@ VANILLA_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "expert_motion"),
-    ("critic", "expert_anchor_pos_b"),
-    ("critic", "expert_anchor_ori_b"),
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -26,7 +24,7 @@ VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "latent_command"),
+    ("command", "policy_command"),
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
@@ -34,17 +32,17 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "expert_motion"),
-    ("policy", "expert_anchor_pos_b"),
-    ("policy", "expert_anchor_ori_b"),
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
 ]
 
 LATENT_PRIOR_INPUT_KEYS: list[tuple[str, str]] = []
 
 LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "expert_motion"),
-    ("critic", "expert_anchor_pos_b"),
-    ("critic", "expert_anchor_ori_b"),
+    ("command", "reference_motion"),
+    ("command", "reference_anchor_pos_b"),
+    ("command", "reference_anchor_ori_b"),
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -55,9 +53,22 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 REWARD_INPUT_KEYS: list[tuple[str, str]] = [
-    ("reward_input", "expert_motion"),
-    ("reward_input", "expert_anchor_pos_b"),
-    ("reward_input", "expert_anchor_ori_b"),
+    ("reward_state", "reference_command"),
+    ("reward_state", "joint_pos"),
+    ("reward_state", "joint_vel"),
+    ("reward_state", "root_pos"),
+    ("reward_state", "root_quat"),
+    ("reward_state", "root_lin_vel"),
+    ("reward_state", "root_ang_vel"),
+]
+
+REWARD_GROUP_HEAD_WEIGHTS: list[float] = [
+    1.0 / 6.0,
+    1.0 / 6.0,
+    1.0 / 6.0,
+    1.0 / 6.0,
+    1.0 / 6.0,
+    1.0 / 6.0,
 ]
 
 
@@ -85,7 +96,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
             LATENT_POSTERIOR_INPUT_KEYS
         )
         self.ipmd.latent_learning.prior_input_keys = list(LATENT_PRIOR_INPUT_KEYS)
-        self.ipmd.latent_key = ("policy", "latent_command")
+        self.ipmd.latent_key = ("command", "policy_command")
         self.ipmd.use_latent_command = use_latent_command
 
     def __post_init__(self):
@@ -130,8 +141,8 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.collector.total_frames = 5_000_000_000
         self.save_interval = 5_000_000  # samples
 
-        # Debug: latent posterior input mirrors the single-step vanilla tracker
-        # policy reference payload directly: expert_motion (58) + anchor_ori (6).
+        # Debug: latent posterior input mirrors the env-owned frame-t reference
+        # command slices directly.
         self.ipmd.latent_dim = 64
         self.ipmd.latent_steps_min = 1
         self.ipmd.latent_steps_max = 1
@@ -155,13 +166,13 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.latent_learning.kl_coeff = 0.0
         self.ipmd.latent_learning.probe_enabled = False
         self.ipmd.latent_learning.probe_condition_on_state = False
-        self.ipmd.latent_learning.probe_target_keys = list(REWARD_INPUT_KEYS)
+        self.ipmd.latent_learning.probe_target_keys = list(LATENT_POSTERIOR_INPUT_KEYS)
         self.ipmd.latent_learning.probe_hidden_dims = [256, 256]
         self.ipmd.latent_learning.probe_activation = "elu"
         self.ipmd.latent_learning.probe_lr = 3.0e-4
         self.ipmd.latent_learning.probe_grad_clip_norm = 1.0
         self.ipmd.latent_learning.probe_batch_size = 8192
-        self.ipmd.env_reward_weight = 1.0
+        self.ipmd.env_reward_weight = 0.0
 
         # Keep the policy objective free of extra latent shaping.
         self.ipmd.diversity_bonus_coeff = 0.0
@@ -169,19 +180,23 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.ipmd.latent_uniformity_temperature = 2.0
 
         self.ipmd.reward_input_type = "s"
-        self.ipmd.use_estimated_rewards_for_ppo = False
+        self.ipmd.reward_model_type = "grouped"
+        self.ipmd.reward_group_head_weights = list(REWARD_GROUP_HEAD_WEIGHTS)
+        self.ipmd.use_estimated_rewards_for_ppo = True
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
         self.ipmd.bc_coef = 0.0
         self.compile.compile = False
         # self.trainer.progress_bar = False
         # self.trainer.log_interval = 10_000_000
-        self.ipmd.reward_output_scale = 1.0
-        self.ipmd.estimated_reward_clamp_min = -1.0
-        self.ipmd.estimated_reward_clamp_max = 1.0
+        self.ipmd.reward_output_activation = "sigmoid"
+        self.ipmd.reward_output_scale = 0.25
+        self.ipmd.estimated_reward_clamp_min = 0.0
+        self.ipmd.estimated_reward_clamp_max = 0.25
         self.ipmd.est_reward_weight = 1.0
         self.ipmd.reward_loss_coeff = 1.0
-        self.ipmd.reward_l2_coeff = 0.0
-        self.ipmd.reward_grad_penalty_coeff = 0.0
+        self.ipmd.reward_l2_coeff = 0.05
+        self.ipmd.reward_grad_penalty_coeff = 0.2
+        self.ipmd.reward_logit_reg_coeff = 0.001
         self.collector.no_cuda_sync = True
 
         # Collector latents should consume the same observation-manager channel
