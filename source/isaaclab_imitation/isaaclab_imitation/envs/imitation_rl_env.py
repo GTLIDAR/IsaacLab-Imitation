@@ -355,6 +355,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._expert_env_origins = self.scene.env_origins.clone()
         self._expert_default_joint_pos = self.robot.data.default_joint_pos.clone()
         self._expert_default_joint_vel = self.robot.data.default_joint_vel.clone()
+        self._reference_reset_root_pos = self.robot.data.root_pos_w.clone()
+        self._reference_reset_root_quat = self.robot.data.root_quat_w.clone()
         self._setup_reconstructed_reference_action_cache()
         self._finalize_reference_body_names()
         self._initialize_mdp_fast_paths()
