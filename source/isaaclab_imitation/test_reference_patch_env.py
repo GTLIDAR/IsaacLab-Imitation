@@ -106,6 +106,32 @@ class _StepTrajectoryManager:
         return reference
 
 
+class _SyncTrajectoryManager:
+    def __init__(self) -> None:
+        self._state_device = torch.device("cpu")
+        self.env_traj_rank = torch.tensor([0, 1, 2], dtype=torch.long)
+        self.env_step = torch.tensor([10, 20, 30], dtype=torch.long)
+
+    def set_env_cursor(self, *, env_ids, ranks, steps):
+        self.env_traj_rank[env_ids] = ranks
+        self.env_step[env_ids] = steps
+
+    def sample(self, env_ids=None, advance=False):
+        assert not advance
+        env_ids_t = torch.as_tensor(env_ids, dtype=torch.long)
+        return TensorDict(
+            {
+                "frame": self.env_step.index_select(0, env_ids_t)
+                .to(dtype=torch.float32)
+                .unsqueeze(-1),
+                "rank": self.env_traj_rank.index_select(0, env_ids_t)
+                .to(dtype=torch.float32)
+                .unsqueeze(-1),
+            },
+            batch_size=[int(env_ids_t.shape[0])],
+        )
+
+
 class _FrameObservationManager:
     def __init__(self, env: ImitationRLEnv) -> None:
         self.env = env
@@ -261,6 +287,43 @@ def test_get_current_expert_window_term_returns_motion_window() -> None:
     assert torch.equal(motion, expected)
 
 
+def test_sync_reference_cursor_updates_target_frame_only() -> None:
+    env = _make_uninitialized_env(num_envs=3)
+    env.trajectory_manager = _SyncTrajectoryManager()
+    env.current_expert_frame = TensorDict(
+        {
+            "frame": torch.full((3, 1), -1.0),
+            "rank": torch.full((3, 1), -1.0),
+        },
+        batch_size=[3],
+    )
+    env._current_reference_local_step = torch.zeros(3, dtype=torch.long)
+    env._invalidate_mdp_cache = lambda: None
+    env._get_tracked_reference_root_pos_w = lambda: None
+
+    env.sync_reference_cursor_from_source_envs(
+        source_env_ids=[2],
+        target_env_ids=[0],
+    )
+
+    assert torch.equal(
+        env.trajectory_manager.env_traj_rank,
+        torch.tensor([2, 1, 2], dtype=torch.long),
+    )
+    assert torch.equal(
+        env.trajectory_manager.env_step,
+        torch.tensor([30, 20, 30], dtype=torch.long),
+    )
+    assert torch.equal(
+        env.current_expert_frame["frame"].squeeze(-1),
+        torch.tensor([30.0, -1.0, -1.0]),
+    )
+    assert torch.equal(
+        env.current_expert_frame["rank"].squeeze(-1),
+        torch.tensor([2.0, -1.0, -1.0]),
+    )
+
+
 def test_reference_transform_uses_env_origin_not_reset_alignment() -> None:
     env = _make_uninitialized_env(num_envs=2)
     env.scene = SimpleNamespace(
@@ -279,15 +342,6 @@ def test_reference_transform_uses_env_origin_not_reset_alignment() -> None:
         [[0.70710677, 0.0, 0.0, 0.70710677], [1.0, 0.0, 0.0, 0.0]],
         dtype=torch.float32,
     )
-    env._reference_reset_root_pos = torch.tensor(
-        [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-        dtype=torch.float32,
-    )
-    env._reference_reset_root_quat = torch.tensor(
-        [[1.0, 0.0, 0.0, 0.0], [0.70710677, 0.0, 0.0, 0.70710677]],
-        dtype=torch.float32,
-    )
-
     align_quat, align_pos = env._get_reference_alignment_transform()
 
     expected_quat = torch.tensor([[1.0, 0.0, 0.0, 0.0]]).repeat(2, 1)
