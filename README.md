@@ -404,6 +404,17 @@ python scripts/rlopt/play.py \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
 
+Compare an RLOpt policy checkpoint against the synchronized reference motion:
+
+```bash
+python scripts/compare_policy_reference.py \
+    --task Isaac-Imitation-G1-Latent-v0 \
+    --algo IPMD \
+    --checkpoint /absolute/path/to/checkpoint.pt \
+    env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json \
+    env.refresh_zarr_dataset=False
+```
+
 Replay all 40 local G1 LAFAN1 motions from the full manifest:
 
 ```bash
