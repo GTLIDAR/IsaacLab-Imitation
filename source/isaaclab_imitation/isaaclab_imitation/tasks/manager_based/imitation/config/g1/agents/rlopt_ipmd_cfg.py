@@ -53,23 +53,23 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 REWARD_INPUT_KEYS: list[tuple[str, str]] = [
-    ("reward_state", "reference_command"),
+    ("command", "policy_command"),
     ("reward_state", "joint_pos"),
     ("reward_state", "joint_vel"),
     ("reward_state", "root_pos"),
     ("reward_state", "root_quat"),
     ("reward_state", "root_lin_vel"),
     ("reward_state", "root_ang_vel"),
+    ("reward_state", "ee_pos_b"),
+    ("reward_state", "ee_ori_b"),
+    ("reward_state", "ee_lin_vel_w"),
+    ("reward_state", "ee_ang_vel_w"),
 ]
 
+_REWARD_GROUP_HEAD_COUNT = len(REWARD_INPUT_KEYS) - 1
 REWARD_GROUP_HEAD_WEIGHTS: list[float] = [
-    1.0 / 6.0,
-    1.0 / 6.0,
-    1.0 / 6.0,
-    1.0 / 6.0,
-    1.0 / 6.0,
-    1.0 / 6.0,
-]
+    1.0 / _REWARD_GROUP_HEAD_COUNT
+] * _REWARD_GROUP_HEAD_COUNT
 
 
 @configclass
@@ -181,6 +181,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
 
         self.ipmd.reward_input_type = "s"
         self.ipmd.reward_model_type = "grouped"
+        self.ipmd.reward_group_context_keys = [("command", "policy_command")]
         self.ipmd.reward_group_head_weights = list(REWARD_GROUP_HEAD_WEIGHTS)
         self.ipmd.use_estimated_rewards_for_ppo = True
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)

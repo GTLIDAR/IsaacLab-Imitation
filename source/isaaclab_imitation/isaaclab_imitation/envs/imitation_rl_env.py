@@ -21,6 +21,7 @@ from tensordict import TensorDict
 
 logger = logging.getLogger(__name__)
 NestedKey: TypeAlias = str | tuple[str, ...]
+RewardBodyTermSpec: TypeAlias = tuple[str, tuple[str, ...], str]
 _MDP_COMPILED: Any | None = None
 
 
@@ -357,6 +358,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         self._setup_reconstructed_reference_action_cache()
         self._finalize_reference_body_names()
         self._initialize_mdp_fast_paths()
+        self._setup_expert_reward_body_term_specs()
         self._setup_reference_velocity_visualizer()
 
     @staticmethod
@@ -985,6 +987,76 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         else:
             self._mdp_reset_root_velocity_source = "zeros"
 
+    @staticmethod
+    def _reward_body_names_from_asset_cfg(
+        asset_cfg: Any,
+        *,
+        term_name: str,
+    ) -> tuple[str, ...]:
+        body_names = asset_cfg.body_names
+        if isinstance(body_names, str):
+            return (body_names,)
+        if isinstance(body_names, Sequence):
+            names = tuple(str(name) for name in body_names)
+            if len(names) == 0:
+                raise ValueError(
+                    f"reward_state.{term_name} must specify at least one body name."
+                )
+            return names
+        raise TypeError(
+            f"reward_state.{term_name} asset_cfg.body_names must be a string or sequence."
+        )
+
+    def _setup_expert_reward_body_term_specs(self) -> None:
+        self._expert_reward_body_term_specs: dict[str, RewardBodyTermSpec] = {}
+        observation_manager = self.observation_manager
+        reward_terms = observation_manager.active_terms.get("reward_state", [])
+        reward_term_cfgs = observation_manager._group_obs_term_cfgs.get(
+            "reward_state", []
+        )
+        body_func_kinds = {
+            "robot_body_pos_b": "pos_b",
+            "robot_body_ori_b": "ori_b",
+            "robot_body_lin_vel_w": "lin_vel_w",
+            "robot_body_ang_vel_w": "ang_vel_w",
+        }
+
+        for term_name, term_cfg in zip(reward_terms, reward_term_cfgs, strict=True):
+            func_name = term_cfg.func.__name__
+            term_kind = body_func_kinds.get(func_name)
+            if term_kind is None:
+                continue
+
+            params = term_cfg.params
+            asset_cfg = params["asset_cfg"]
+            body_names = self._reward_body_names_from_asset_cfg(
+                asset_cfg, term_name=term_name
+            )
+            anchor_body_name = str(params.get("anchor_body_name", "torso_link"))
+
+            self._get_reference_body_ids_fast(body_names)
+            if term_kind in {"pos_b", "ori_b"}:
+                self._get_reference_body_ids_fast((anchor_body_name,))
+                self._get_robot_anchor_body_id_fast(anchor_body_name)
+                self._expert_body_pose_fields(self.current_expert_frame)
+            else:
+                missing_fields = [
+                    field_name
+                    for field_name in ("body_ang_vel_w", "body_lin_vel_w")
+                    if field_name not in self.current_expert_frame.keys()
+                ]
+                if len(missing_fields) > 0:
+                    raise KeyError(
+                        "Reward-state body velocity terms require expert fields "
+                        f"{missing_fields!r}."
+                    )
+
+            self._expert_reward_body_term_specs[term_name] = (
+                term_kind,
+                body_names,
+                anchor_body_name,
+            )
+
     def _ensure_mdp_fast_paths(self) -> None:
         if hasattr(self, "_mdp_cache_step"):
             return
@@ -1335,9 +1407,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         env_ids = env_ids.to(device=self.device, dtype=torch.long)
         return value.index_select(0, env_ids)
 
-    def get_reference_motion(
-        self, env_ids: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def get_reference_motion(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
         """Return frame-t reference joint position/velocity command."""
         return self._current_reference_command_term("reference_motion", env_ids)
 
@@ -1359,9 +1429,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         """Return the full frame-t expert goal payload."""
         return self._current_reference_command_term("reference_command", env_ids)
 
-    def get_policy_command(
-        self, env_ids: torch.Tensor | None = None
-    ) -> torch.Tensor:
+    def get_policy_command(self, env_ids: torch.Tensor | None = None) -> torch.Tensor:
         """Return the command currently visible to the policy."""
         if self._policy_command_uses_latent:
             return self.get_agent_latent_command(env_ids=env_ids)
@@ -2099,6 +2167,124 @@ class ImitationRLEnv(ManagerBasedRLEnv):
             "expert_motion": torch.cat([joint_pos_ref, joint_vel_ref], dim=-1),
         }
 
+    def _expert_reward_body_pose_term(
+        self,
+        expert_frame: TensorDict,
+        env_ids: torch.Tensor,
+        *,
+        context: str,
+        term_kind: str,
+        body_names: Sequence[str],
+        anchor_body_name: str,
+    ) -> torch.Tensor:
+        compiled = _get_mdp_compiled_module()
+        body_pos_source, body_quat_source, body_dim = self._expert_body_pose_fields(
+            expert_frame
+        )
+        body_ids = self._get_reference_body_ids_fast(body_names)
+        body_pos_ref = body_pos_source.index_select(body_dim, body_ids)
+        body_quat_ref = body_quat_source.index_select(body_dim, body_ids)
+        body_pos_w, body_quat_w_opt = self._transform_reference_pose_to_world(
+            body_pos_ref,
+            body_quat_ref,
+            env_ids=env_ids,
+        )
+        if body_quat_w_opt is None:
+            raise RuntimeError(
+                "Failed to transform expert reward-state body quaternions."
+            )
+
+        if context == "expert":
+            anchor_ids = self._get_reference_body_ids_fast((anchor_body_name,))
+            anchor_pos_ref = body_pos_source.index_select(body_dim, anchor_ids).squeeze(
+                body_dim
+            )
+            anchor_quat_ref = body_quat_source.index_select(
+                body_dim, anchor_ids
+            ).squeeze(body_dim)
+            anchor_pos_w, anchor_quat_w_opt = self._transform_reference_pose_to_world(
+                anchor_pos_ref,
+                anchor_quat_ref,
+                env_ids=env_ids,
+            )
+            if anchor_quat_w_opt is None:
+                raise RuntimeError(
+                    "Failed to transform expert reward-state anchor quaternion."
+                )
+            anchor_quat_w = anchor_quat_w_opt
+        elif context == "rollout":
+            anchor_pos_w, anchor_quat_w = self._get_robot_anchor_state_w_fast(
+                anchor_body_name
+            )
+            env_ids_long = env_ids.to(device=self.device, dtype=torch.long)
+            anchor_pos_w = anchor_pos_w.index_select(0, env_ids_long)
+            anchor_quat_w = anchor_quat_w.index_select(0, env_ids_long)
+        else:
+            raise ValueError(f"Unsupported expert observation context: {context!r}.")
+
+        body_pos_b, body_ori_b = compiled.body_pose_in_anchor_frame(
+            anchor_pos_w,
+            anchor_quat_w,
+            body_pos_w,
+            body_quat_w_opt,
+        )
+        if term_kind == "pos_b":
+            return body_pos_b.reshape(body_pos_b.shape[0], -1)
+        if term_kind == "ori_b":
+            return compiled.quat_to_rot6d_flat(body_ori_b)
+        raise ValueError(f"Unsupported reward body pose term kind: {term_kind!r}.")
+
+    def _expert_reward_body_velocity_term(
+        self,
+        expert_frame: TensorDict,
+        env_ids: torch.Tensor,
+        *,
+        term_kind: str,
+        body_names: Sequence[str],
+    ) -> torch.Tensor:
+        body_ang_vel = expert_frame["body_ang_vel_w"]
+        body_lin_vel = expert_frame["body_lin_vel_w"]
+        body_ids = self._get_reference_body_ids_fast(body_names)
+        ref_cvel = torch.cat([body_ang_vel, body_lin_vel], dim=-1).index_select(
+            1, body_ids
+        )
+        align_quat, _ = self._get_reference_alignment_transform(env_ids)
+        ref_ang_vel_w, ref_lin_vel_w = (
+            _get_mdp_compiled_module().transform_body_velocity_to_world(
+                align_quat, ref_cvel
+            )
+        )
+        if term_kind == "lin_vel_w":
+            return ref_lin_vel_w.reshape(ref_lin_vel_w.shape[0], -1)
+        if term_kind == "ang_vel_w":
+            return ref_ang_vel_w.reshape(ref_ang_vel_w.shape[0], -1)
+        raise ValueError(f"Unsupported reward body velocity term kind: {term_kind!r}.")
+
+    def _expert_reward_body_term(
+        self,
+        expert_frame: TensorDict,
+        env_ids: torch.Tensor,
+        *,
+        context: str,
+        spec: RewardBodyTermSpec,
+    ) -> torch.Tensor:
+        term_kind, body_names, anchor_body_name = spec
+        if term_kind in {"pos_b", "ori_b"}:
+            return self._expert_reward_body_pose_term(
+                expert_frame,
+                env_ids,
+                context=context,
+                term_kind=term_kind,
+                body_names=body_names,
+                anchor_body_name=anchor_body_name,
+            )
+        return self._expert_reward_body_velocity_term(
+            expert_frame,
+            env_ids,
+            term_kind=term_kind,
+            body_names=body_names,
+        )
+
     def _expert_anchor_terms(
         self,
         expert_frame: TensorDict,
@@ -2381,7 +2567,19 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                         )
                     value = reference_terms_cache["reference_command"]
                 else:
-                    value = raw_state_terms.get(term_name)
+                    reward_body_spec = self._expert_reward_body_term_specs.get(
+                        term_name
+                    )
+                    value = (
+                        self._expert_reward_body_term(
+                            expert_frame,
+                            env_ids,
+                            context=context,
+                            spec=reward_body_spec,
+                        )
+                        if reward_body_spec is not None
+                        else raw_state_terms.get(term_name)
+                    )
             elif group_name == "expert_window":
                 if len(prefix) > 0:
                     unknown_terms.append(term_name)
@@ -2538,8 +2736,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 next_env_ids = current_env_ids
                 next_prefix = ("next",)
             else:
-                next_expert_frame, next_env_ids, _ = self._sample_expert_trajectory_batch(
-                    batch_size
+                next_expert_frame, next_env_ids, _ = (
+                    self._sample_expert_trajectory_batch(batch_size)
                 )
                 next_prefix = ()
             mapped_next = self._map_requested_expert_observations(

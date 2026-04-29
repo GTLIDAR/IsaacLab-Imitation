@@ -104,6 +104,13 @@ TERM=xterm conda run -n SkillLearning ../IsaacLab/isaaclab.sh -p scripts/zero_ag
 
 Use heavier training or playback commands only when the task requires them.
 
+## Cluster Training
+
+- Treat cluster execution through `docker/cluster/cluster_interface.sh job ...` as the authoritative training path. Local runs are useful for smoke tests and debugging, but final training evidence should come from the cluster.
+- The Dance102 Unitree manifest is the easy dataset for quick imitation experiments.
+- Cluster jobs use the full LAFAN1 G1 dataset by default. Unless `docker/cluster/.env.cluster` specifies a narrower manifest path such as `CLUSTER_G1_MANIFEST_PATH=.../g1_unitree_dance102_manifest.json`, the cluster wrapper appends the full LAFAN1 manifest override from the configured cluster data root.
+- When reporting cluster results, state the manifest used. This matters because full LAFAN1 has many trajectories and is not comparable to the easier Dance102 setup.
+
 ## Submodule Boundary
 
 - Do not “fix” code inside `IsaacLab/`, `RLOpt/`, or `ImitationLearningTools/` as part of routine top-level work.

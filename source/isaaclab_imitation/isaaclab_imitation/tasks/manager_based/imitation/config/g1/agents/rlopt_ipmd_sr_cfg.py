@@ -57,13 +57,17 @@ LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
 ]
 
 REWARD_INPUT_KEYS: list[tuple[str, str]] = [
-    ("reward_state", "reference_command"),
+    ("command", "policy_command"),
     ("reward_state", "joint_pos"),
     ("reward_state", "joint_vel"),
     ("reward_state", "root_pos"),
     ("reward_state", "root_quat"),
     ("reward_state", "root_lin_vel"),
     ("reward_state", "root_ang_vel"),
+    ("reward_state", "ee_pos_b"),
+    ("reward_state", "ee_ori_b"),
+    ("reward_state", "ee_lin_vel_w"),
+    ("reward_state", "ee_ang_vel_w"),
 ]
 
 

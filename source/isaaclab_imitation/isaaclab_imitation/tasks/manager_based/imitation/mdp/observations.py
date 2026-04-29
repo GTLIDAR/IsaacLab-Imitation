@@ -186,3 +186,19 @@ def robot_body_ori_b(
         asset_cfg.body_ids, anchor_body_name
     )
     return quat_to_rot6d_flat(body_ori_b)
+
+
+def robot_body_lin_vel_w(
+    env: ImitationRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    _, body_lin_vel_w = env._get_robot_body_velocity_w_fast(asset_cfg.body_ids)
+    return body_lin_vel_w.reshape(env.num_envs, -1)
+
+
+def robot_body_ang_vel_w(
+    env: ImitationRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    body_ang_vel_w, _ = env._get_robot_body_velocity_w_fast(asset_cfg.body_ids)
+    return body_ang_vel_w.reshape(env.num_envs, -1)

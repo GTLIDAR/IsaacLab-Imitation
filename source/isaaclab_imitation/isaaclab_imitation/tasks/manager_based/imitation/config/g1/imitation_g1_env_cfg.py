@@ -108,10 +108,31 @@ def _g1_tracked_body_asset_cfg() -> SceneEntityCfg:
     )
 
 
+def _g1_ee_body_asset_cfg() -> SceneEntityCfg:
+    return SceneEntityCfg(
+        "robot",
+        body_names=G1_EE_BODY_NAMES,
+        preserve_order=True,
+    )
+
+
 def _g1_tracked_body_obs_params() -> dict[str, object]:
     return {
         "asset_cfg": _g1_tracked_body_asset_cfg(),
         "anchor_body_name": G1_OBS_ANCHOR_BODY_NAME,
+    }
+
+
+def _g1_ee_body_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": _g1_ee_body_asset_cfg(),
+        "anchor_body_name": G1_OBS_ANCHOR_BODY_NAME,
+    }
+
+
+def _g1_ee_body_velocity_obs_params() -> dict[str, object]:
+    return {
+        "asset_cfg": _g1_ee_body_asset_cfg(),
     }
 
 
@@ -325,6 +346,22 @@ class G1ObservationCfg:
         root_quat = ObsTerm(func=mdp.root_quat_w)
         root_lin_vel = ObsTerm(func=mdp.root_lin_vel_w)
         root_ang_vel = ObsTerm(func=mdp.root_ang_vel_w)
+        ee_pos_b = ObsTerm(
+            func=mdp.robot_body_pos_b,
+            params=_g1_ee_body_obs_params(),
+        )
+        ee_ori_b = ObsTerm(
+            func=mdp.robot_body_ori_b,
+            params=_g1_ee_body_obs_params(),
+        )
+        ee_lin_vel_w = ObsTerm(
+            func=mdp.robot_body_lin_vel_w,
+            params=_g1_ee_body_velocity_obs_params(),
+        )
+        ee_ang_vel_w = ObsTerm(
+            func=mdp.robot_body_ang_vel_w,
+            params=_g1_ee_body_velocity_obs_params(),
+        )
 
         def __post_init__(self):
             self.concatenate_terms = False
