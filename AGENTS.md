@@ -53,6 +53,10 @@ conda run -n SkillLearning ./scripts/install_workspace.sh
 - Preserve Isaac Lab / Hydra CLI patterns already used in `scripts/`.
 - Do not assume IDE-only workflows; command-line verification is the default here.
 - Avoid committing generated artifacts, caches, checkpoints, or log directories.
+- For simple G1 Dance102 cluster experiments, edit `docker/cluster/.env.cluster`
+  and set `CLUSTER_G1_MANIFEST_PATH` to the Dance102 manifest before submitting.
+  If that `CLUSTER_G1_MANIFEST_PATH` line is commented out, it means the job is
+  using the default 40 trajectories.
 
 ## Validation
 
