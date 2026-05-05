@@ -122,3 +122,4 @@ Each manifest entry requires `path` (or `file`) and `input_fps` fields.
 - **Type checking**: `pyrefly.toml` at repo root configures search paths for `pyrefly`. Don't modify `pyrightconfig.json` or VS Code Pylance settings.
 - **Logs**: written under `logs/`; `outputs/` holds Hydra outputs. Both gitignored.
 - **Cluster jobs**: managed via `docker/cluster/cluster_interface.sh`. See `REPO_SETUP.md` and `docker/cluster/.env.cluster` for env var config.
+- **G1 Dance102 cluster jobs**: for simple Dance102 experiments, set `CLUSTER_G1_MANIFEST_PATH` in `docker/cluster/.env.cluster` to the Dance102 manifest. If that line is commented out, the job is using the default 40 trajectories.
