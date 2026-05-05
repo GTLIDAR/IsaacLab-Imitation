@@ -2505,7 +2505,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
 
         for key in dedup_required_keys:
             key_tuple = self._normalize_nested_key(key)
-            if key_tuple == ("action",):
+            if key_tuple in (("action",), ("expert_action",)):
                 needs_action = True
                 continue
             if len(key_tuple) > 0 and key_tuple[0] == "next":

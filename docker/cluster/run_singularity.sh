@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -e
+
 echo "(run_singularity.py): Called on compute node from current isaaclab directory $1 with container profile $2 and arguments ${@:3}"
 
 #==
@@ -148,6 +150,12 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 source $SCRIPT_DIR/.env.cluster
 source $SCRIPT_DIR/../.env.base
 
+base_tmpdir="${TMPDIR:-/tmp}"
+job_tmpdir="${base_tmpdir%/}/isaaclab-${SLURM_JOB_ID:-$$}"
+mkdir -p "$job_tmpdir"
+export TMPDIR="$job_tmpdir"
+echo "[INFO] Using per-job TMPDIR: $TMPDIR"
+
 # Paths in .env.cluster are relative to $HOME; prepend it to make them absolute.
 CLUSTER_ISAAC_SIM_CACHE_DIR="$HOME/$CLUSTER_ISAAC_SIM_CACHE_DIR"
 CLUSTER_ISAACLAB_DIR="$HOME/$CLUSTER_ISAACLAB_DIR"
@@ -236,7 +244,7 @@ cp -r $1 $TMPDIR
 dir_name=$(basename "$1")
 
 # copy container to the compute node
-tar -xf $CLUSTER_SIF_PATH/$2.tar  -C $TMPDIR
+tar -xf "$CLUSTER_SIF_PATH/$2.tar" -C "$TMPDIR"
 
 # create a persistant overlay using apptainer with fakeroot
 apptainer overlay create --size 20240 $CLUSTER_ISAACLAB_DIR/$dir_name.img
