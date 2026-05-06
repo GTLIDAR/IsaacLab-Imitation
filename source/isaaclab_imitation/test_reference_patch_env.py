@@ -209,6 +209,58 @@ def _make_env_for_patch_tests() -> ImitationRLEnv:
     return env
 
 
+def _make_env_for_expert_action_sampler(
+    *,
+    reconstructed_action: torch.Tensor | None,
+    recorded_action: torch.Tensor | None = None,
+) -> ImitationRLEnv:
+    env = _make_uninitialized_env(num_envs=2)
+    env._reference_has_aligned_next = True
+    env._reconstructed_reference_action_enabled = reconstructed_action is not None
+    env._latent_patch_past_steps = 0
+    env._latent_patch_future_steps = 0
+    env._expert_sampler_warned_unknown_terms = set()
+    env._sample_expert_trajectory_batch = lambda batch_size: (
+        TensorDict(
+            {} if recorded_action is None else {"action": recorded_action[:batch_size]},
+            batch_size=[batch_size],
+            device=env.device,
+        ),
+        torch.arange(batch_size, device=env.device) % env.num_envs,
+        torch.arange(batch_size, device=env.device),
+    )
+    env._expert_local_steps_from_global_indices = (
+        lambda env_ids, global_indices: torch.zeros_like(global_indices)
+    )
+    if reconstructed_action is not None:
+        env._sample_reconstructed_reference_actions = (
+            lambda global_indices, env_ids: reconstructed_action[: env_ids.shape[0]]
+        )
+    env._map_requested_expert_observations = lambda *args, **kwargs: TensorDict(
+        {},
+        batch_size=[args[1].shape[0]],
+        device=env.device,
+    )
+    return env
+
+
+def test_expert_action_request_returns_reconstructed_reference_action() -> None:
+    reconstructed_action = torch.tensor([[0.1], [0.2], [0.3]], dtype=torch.float32)
+    env = _make_env_for_expert_action_sampler(reconstructed_action=reconstructed_action)
+
+    batch = env.sample_expert_batch(3, ["expert_action"])
+
+    assert torch.equal(batch["expert_action"], reconstructed_action)
+    assert torch.equal(batch["action"], reconstructed_action)
+
+
+def test_expert_action_request_raises_when_reconstruction_unavailable() -> None:
+    env = _make_env_for_expert_action_sampler(reconstructed_action=None)
+
+    with pytest.raises(RuntimeError, match="action/expert_action"):
+        env.sample_expert_batch(3, ["expert_action"])
+
+
 def test_standard_step_returns_next_reference_frame_without_double_advance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

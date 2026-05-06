@@ -2612,23 +2612,12 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                     else current_expert_frame.get("action")
                 )
             if sampled_action is None:
-                if not self._expert_sampler_warned_action_fallback:
-                    logger.warning(
-                        "Expert sampler action unavailable; using zero-action fallback."
-                    )
-                    self._expert_sampler_warned_action_fallback = True
-                action_space = getattr(
-                    self, "single_action_space", getattr(self, "action_space", None)
-                )
-                action_shape = (
-                    tuple(int(dim) for dim in action_space.shape)
-                    if action_space is not None and getattr(action_space, "shape", None)
-                    else (1,)
-                )
-                sampled_action = torch.zeros(
-                    (batch_size, *action_shape),
-                    device=self.device,
-                    dtype=torch.float32,
+                raise RuntimeError(
+                    "Expert sampler was asked for action/expert_action, but no "
+                    "reconstructed reference action or recorded expert action is "
+                    "available. Enable reconstructed_reference_action=True with "
+                    "transition-aligned next_* reference data, or provide action "
+                    "labels in the expert frame."
                 )
             sampled_action = sampled_action.to(self.device)
             expert_batch.set("action", sampled_action)

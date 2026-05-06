@@ -3,14 +3,28 @@ from isaaclab.utils import configclass
 from isaaclab_imitation.envs.rlopt import IPMDBilinearRLOptConfig
 
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.agents.rlopt_ipmd_cfg import (
-    LATENT_POLICY_INPUT_KEYS, 
-    LATENT_CRITIC_INPUT_KEYS, 
-    VANILLA_POLICY_INPUT_KEYS, 
-    VANILLA_CRITIC_INPUT_KEYS, 
-    REWARD_INPUT_KEYS, 
-    LATENT_POSTERIOR_INPUT_KEYS, 
-    LATENT_PRIOR_INPUT_KEYS, 
+    LATENT_CRITIC_INPUT_KEYS,
+    LATENT_POLICY_INPUT_KEYS,
+    LATENT_POSTERIOR_INPUT_KEYS,
+    LATENT_PRIOR_INPUT_KEYS,
+    REWARD_INPUT_KEYS,
+    VANILLA_CRITIC_INPUT_KEYS,
+    VANILLA_POLICY_INPUT_KEYS,
 )
+
+BILINEAR_OBS_KEYS: list[tuple[str, str]] = [
+    ("policy", "base_ang_vel"),
+    ("policy", "joint_pos_rel"),
+    ("policy", "joint_vel_rel"),
+    ("policy", "last_action"),
+]
+
+BILINEAR_NEXT_OBS_KEYS: list[tuple[str, str]] = [
+    ("policy", "base_ang_vel"),
+    ("policy", "joint_pos_rel"),
+    ("policy", "joint_vel_rel"),
+]
+
 
 @configclass
 class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
@@ -38,6 +52,8 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.ipmd.latent_learning.prior_input_keys = list(LATENT_PRIOR_INPUT_KEYS)
         self.ipmd.latent_key = ("policy", "latent_command")
         self.ipmd.use_latent_command = use_latent_command
+        self.bilinear.obs_keys = list(BILINEAR_OBS_KEYS)
+        self.bilinear.next_obs_keys = list(BILINEAR_NEXT_OBS_KEYS)
 
     def __post_init__(self):
         super().__post_init__()
@@ -49,6 +65,7 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
 
         self.ipmd.use_latent_command = bool(self._default_use_latent_command)
         self.sync_input_keys()
+        self.logger.group_name = ""
 
         # More initial exploration to improve policy-state coverage for inverse reward.
         self.collector.init_random_frames = 0
@@ -79,7 +96,7 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 5_000_000_000
-        self.save_interval = 5_000_000  # samples
+        self.save_interval = 100  # rollout iterations
 
         # Debug: latent posterior input mirrors the single-step vanilla tracker
         # policy reference payload directly: expert_motion (58) + anchor_ori (6).
@@ -119,11 +136,6 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.ipmd.diversity_target = 0.0
         self.ipmd.latent_uniformity_temperature = 2.0
 
-        # Keep the policy objective free of extra latent shaping.
-        self.ipmd.diversity_bonus_coeff = 0.0
-        self.ipmd.diversity_target = 0.0
-        self.ipmd.latent_uniformity_temperature = 2.0
-
         self.ipmd.reward_input_type = "s"
         self.ipmd.use_estimated_rewards_for_ppo = False
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
@@ -147,6 +159,10 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
             self.ipmd.command_source = "posterior"
 
         self.bilinear.feature_dim = self.ipmd.latent_dim
+        self.bilinear.offline_pretrain.enabled = False
+        self.bilinear.offline_pretrain.num_updates = 2000
+        self.bilinear.offline_pretrain.batch_size = 8192
+        self.bilinear.offline_pretrain.log_interval = 100
 
 
 @configclass
