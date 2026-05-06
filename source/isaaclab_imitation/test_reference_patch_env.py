@@ -161,6 +161,7 @@ def _make_uninitialized_env(num_envs: int) -> ImitationRLEnv:
         num_envs=num_envs,
         env_origins=torch.zeros(num_envs, 3),
     )
+    env._reference_replay_targets_enabled = False
     env._is_closed = True
     return env
 
@@ -259,6 +260,85 @@ def test_expert_action_request_raises_when_reconstruction_unavailable() -> None:
 
     with pytest.raises(RuntimeError, match="action/expert_action"):
         env.sample_expert_batch(3, ["expert_action"])
+
+
+def test_expert_sampler_provides_policy_proprioceptive_terms() -> None:
+    env = _make_uninitialized_env(num_envs=2)
+    reconstructed_action = torch.tensor(
+        [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]], dtype=torch.float32
+    )
+    expert_frame = TensorDict(
+        {
+            "root_pos": torch.zeros(3, 3),
+            "root_quat": torch.tensor([[1.0, 0.0, 0.0, 0.0]]).repeat(3, 1),
+            "root_lin_vel": torch.tensor(
+                [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]
+            ),
+            "root_ang_vel": torch.tensor(
+                [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6], [0.7, 0.8, 0.9]]
+            ),
+            "joint_pos": torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
+            "joint_vel": torch.tensor([[0.5, 0.6], [0.7, 0.8], [0.9, 1.0]]),
+        },
+        batch_size=[3],
+        device=env.device,
+    )
+    env._reference_has_aligned_next = True
+    env._reconstructed_reference_action_enabled = True
+    env._latent_patch_past_steps = 0
+    env._latent_patch_future_steps = 0
+    env._expert_sampler_warned_unknown_terms = set()
+    env._expert_env_origins = torch.zeros(2, 3)
+    env._expert_default_joint_pos = torch.tensor([[0.1, 0.2], [0.3, 0.4]])
+    env._expert_default_joint_vel = torch.tensor([[0.01, 0.02], [0.03, 0.04]])
+    env.action_manager = SimpleNamespace(action_dim=2)
+    env._sample_expert_trajectory_batch = lambda batch_size: (
+        expert_frame[:batch_size],
+        torch.arange(batch_size, device=env.device) % env.num_envs,
+        torch.arange(batch_size, device=env.device),
+    )
+    env._expert_local_steps_from_global_indices = (
+        lambda env_ids, global_indices: torch.zeros_like(global_indices)
+    )
+    env._sample_reconstructed_reference_actions = (
+        lambda global_indices, env_ids: reconstructed_action[: env_ids.shape[0]]
+    )
+    env._transform_reference_pose_to_world = (
+        lambda ref_pos, ref_quat=None, env_ids=None: (ref_pos, ref_quat)
+    )
+    env._get_reference_alignment_transform = lambda env_ids=None: (
+        torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=env.device).repeat(
+            env.num_envs if env_ids is None else int(env_ids.shape[0]), 1
+        ),
+        torch.zeros(
+            env.num_envs if env_ids is None else int(env_ids.shape[0]),
+            3,
+            device=env.device,
+        ),
+    )
+
+    batch = env.sample_expert_batch(
+        3,
+        [
+            ("policy", "base_ang_vel"),
+            ("policy", "joint_pos_rel"),
+            ("policy", "joint_vel_rel"),
+            ("policy", "last_action"),
+            "expert_action",
+        ],
+    )
+
+    assert torch.equal(batch[("policy", "base_ang_vel")], expert_frame["root_ang_vel"])
+    assert torch.allclose(
+        batch[("policy", "joint_pos_rel")],
+        torch.tensor([[0.9, 1.8], [2.7, 3.6], [4.9, 5.8]]),
+    )
+    assert torch.allclose(
+        batch[("policy", "joint_vel_rel")],
+        torch.tensor([[0.49, 0.58], [0.67, 0.76], [0.89, 0.98]]),
+    )
+    assert torch.equal(batch[("policy", "last_action")], torch.zeros(3, 2))
+    assert torch.equal(batch["expert_action"], reconstructed_action)
 
 
 def test_standard_step_returns_next_reference_frame_without_double_advance(

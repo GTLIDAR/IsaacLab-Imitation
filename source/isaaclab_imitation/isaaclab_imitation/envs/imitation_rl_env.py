@@ -2177,14 +2177,52 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         align_quat, _ = self._get_reference_alignment_transform(env_ids)
         root_lin_vel = math_utils.quat_apply(align_quat, root_lin_vel_ref)
         root_ang_vel = math_utils.quat_apply(align_quat, root_ang_vel_ref)
+        base_lin_vel = math_utils.quat_apply_inverse(root_quat_w, root_lin_vel)
+        base_ang_vel = math_utils.quat_apply_inverse(root_quat_w, root_ang_vel)
+
+        default_joint_pos = getattr(self, "_expert_default_joint_pos", None)
+        if default_joint_pos is None:
+            default_joint_pos = torch.zeros_like(joint_pos_ref)
+        else:
+            default_joint_pos = default_joint_pos.index_select(0, env_ids).to(
+                device=joint_pos_ref.device, dtype=joint_pos_ref.dtype
+            )
+        default_joint_vel = getattr(self, "_expert_default_joint_vel", None)
+        if default_joint_vel is None:
+            default_joint_vel = torch.zeros_like(joint_vel_ref)
+        else:
+            default_joint_vel = default_joint_vel.index_select(0, env_ids).to(
+                device=joint_vel_ref.device, dtype=joint_vel_ref.dtype
+            )
+
+        action_dim = int(joint_pos_ref.shape[-1])
+        action_manager = getattr(self, "action_manager", None)
+        if action_manager is not None:
+            for attr_name in ("total_action_dim", "action_dim"):
+                dim = getattr(action_manager, attr_name, None)
+                if dim is not None:
+                    action_dim = int(dim)
+                    break
+        last_action = expert_frame.get(key("action"))
+        if last_action is None:
+            last_action = torch.zeros(
+                (int(joint_pos_ref.shape[0]), action_dim),
+                device=joint_pos_ref.device,
+                dtype=joint_pos_ref.dtype,
+            )
 
         return {
             "joint_pos": joint_pos_ref,
             "joint_vel": joint_vel_ref,
+            "joint_pos_rel": joint_pos_ref - default_joint_pos,
+            "joint_vel_rel": joint_vel_ref - default_joint_vel,
             "root_pos": root_pos,
             "root_quat": root_quat_w,
             "root_lin_vel": root_lin_vel,
             "root_ang_vel": root_ang_vel,
+            "base_lin_vel": base_lin_vel,
+            "base_ang_vel": base_ang_vel,
+            "last_action": last_action,
             "expert_motion": torch.cat([joint_pos_ref, joint_vel_ref], dim=-1),
         }
 
