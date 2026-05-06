@@ -14,6 +14,10 @@ Treat `IsaacLab/`, `RLOpt/`, `ImitationLearningTools/` as **read-only dependenci
 
 For RLOpt: don't edit vendored submodule at `IsaacLab-Imitation/RLOpt/`. Use installed sibling repo at `/home/fwu91/Documents/Research/SkillLearning/RLOpt` as authoritative `rlopt` codebase. Don't add path overrides forcing submodule copy.
 
+Before editing agent guidance or ownership rules, read
+`wiki/context-management.md`. Keep `AGENTS.md` and `CLAUDE.md` short; put
+longer status, rationale, and strategy in `wiki/`.
+
 ## Environment
 
 Always use `SkillLearning` conda env:

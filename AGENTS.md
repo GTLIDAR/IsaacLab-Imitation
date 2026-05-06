@@ -48,6 +48,9 @@ conda run -n SkillLearning ./scripts/install_workspace.sh
 ## Working Rules
 
 - Read `README.md` first when changing setup, training, or execution workflows.
+- Read `wiki/context-management.md` before changing agent guidance, updating
+  submodule pointers, or deciding between vendored submodule and sibling-repo
+  edit targets.
 - Keep changes aligned with the existing terminal-first workflow.
 - Prefer minimal, targeted edits over broad refactors.
 - Preserve Isaac Lab / Hydra CLI patterns already used in `scripts/`.
