@@ -586,8 +586,10 @@ if __name__ == "__main__":
     try:
         # run the main function
         main()
-    except (KeyboardInterrupt, SystemExit):
-        pass
+    # except (KeyboardInterrupt, SystemExit) as e:
+    # don't want the error goes silently
+    except Exception as e:
+        print(e)
     finally:
         # close sim app
         simulation_app.close()  # type: ignore
