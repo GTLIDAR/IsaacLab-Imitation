@@ -83,6 +83,10 @@ For IPMD-family work, the important values are:
 
 - `IPMD`: base IPMD path.
 - `IPMD_BILINEAR`: IPMD plus bilinear representation/reward variant.
+  Current working assumption: use this with `Isaac-Imitation-G1-Latent-v0` and
+  `ipmd.use_latent_command=True`. The vanilla/non-latent-command bilinear path
+  is not a trusted experiment surface until it is explicitly fixed and
+  revalidated.
 - `IPMD_SR`: supported by the registry, but not the current main focus.
 
 The task registry maps these through `rlopt_<algo>_cfg_entry_point` entries
@@ -147,8 +151,77 @@ Use these as working hypotheses, not settled facts:
   scalar gradient penalty or L2 regularization.
 - Bilinear IPMD is useful if the learned representation captures state structure
   that online reward learning can exploit.
+- The bilinear policy path currently appears to depend on the latent-command
+  task surface. Treat vanilla bilinear results as debugging evidence, not as
+  final comparison data.
 - VQ-VAE/FSQ latent IPMD is useful if discrete or held skill codes stabilize
   the high-level command geometry.
+
+## Current Offline Pretrain Status
+
+As of 2026-05-07, the immediate recovery target is the bilinear SR warm-start
+path, not yet the full offline IRL/GAIL objective. The current implementation
+uses expert trajectory batches from `sample_expert_batch(...)`, reconstructed
+reference actions from transition-aligned next joint positions, and next policy
+observations for the SR target.
+
+The recovered local test ladder is:
+
+- `num_envs=128` for bug-finding smoke runs.
+- `num_envs=1024-2048` for local performance/debug runs.
+- `num_envs=4096` for the first cluster-ready run.
+- Larger cluster env counts should be deliberate memory-headroom probes, not
+  guesses.
+
+Latest verified local results:
+
+- 128-env bug smoke passed with 2 offline SR updates and 1 online iteration.
+- 128-env functional smoke passed with 20 offline SR updates, sampling eval at
+  updates 10 and 20, and 2 online iterations.
+- 1024-env performance smoke passed with 2 offline SR updates and 1 online
+  iteration.
+
+Current cluster comparison target:
+
+- `scratch`: no offline pretrain, online SR updates enabled.
+- `pretrained_finetune`: offline SR pretrain, then online SR updates continue.
+- `pretrained_frozen`: offline SR pretrain, then no online SR updates.
+- `random_frozen`: no offline pretrain and no online SR updates.
+- `pretrained_bc_finetune`: offline SR pretrain, offline policy BC on
+  reconstructed expert actions, then online SR updates continue.
+
+This comparison is now feature-only: `bilinear.policy_include_raw_state=False`,
+so the policy input is `F(s)z` rather than `concat(F(s)z, s)`. This removes the
+raw-state bypass that made `random_frozen` comparable to scratch in the earlier
+batch.
+
+The primary claim is online sample efficiency: whether pretraining reaches the
+same online imitation/control quality using fewer environment interactions.
+Track total wall-clock separately because offline pretraining adds startup cost.
+The active comparison uses a 100M-frame online budget:
+`max_iterations=1024` at `num_envs=4096`.
+
+The current default pretrain budget is `2000` updates with batch size `8192`,
+or about `16.4M` sampled expert transitions before online learning starts. In
+the first feature-only 4096-env run, offline SR loss kept improving through the
+end of pretraining: dynamics loss was about `12.1` at update 100 and `2.68` at
+update 2000, while reconstruction MSE was about `44.0` at update 100 and `4.75`
+at update 2000. This is enough for the first ablation, but not enough to claim
+the offline representation is saturated.
+
+The 20M-frame pretrained+finetune update-count sweep was cancelled after the
+budget was raised. Run a future pretrain-length check with:
+
+```bash
+experiments/bilinear_pretrain/submit_pretrain_update_sweep.sh
+```
+
+The default sweep is `OFFLINE_NUM_UPDATES = 500, 1000, 2000, 4000`. Select the
+pretrain budget by early online learning at fixed environment frames, not by
+offline loss alone.
+
+The next methodological step is still offline IRL/adversarial reward learning
+once the pretrain/online bridge is stable.
 
 ## Implementation Rules
 
@@ -162,4 +235,3 @@ Use these as working hypotheses, not settled facts:
 - If a change is algorithmic, patch sibling `../RLOpt`; if it is expert batch,
   env observation, task registration, manifest, or cluster routing, patch this
   repo.
-

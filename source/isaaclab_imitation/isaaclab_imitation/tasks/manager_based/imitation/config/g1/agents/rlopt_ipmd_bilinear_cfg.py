@@ -65,6 +65,7 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
 
         self.ipmd.use_latent_command = bool(self._default_use_latent_command)
         self.sync_input_keys()
+        self.logger.project_name = "G1-Imitation-RLOpt-Pretrain"
         self.logger.group_name = ""
 
         # More initial exploration to improve policy-state coverage for inverse reward.
@@ -159,6 +160,8 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
             self.ipmd.command_source = "posterior"
 
         self.bilinear.feature_dim = self.ipmd.latent_dim
+        self.bilinear.policy_include_raw_state = False
+        self.bilinear.detach_features_for_policy = False
         self.bilinear.offline_pretrain.enabled = False
         self.bilinear.offline_pretrain.num_updates = 2000
         self.bilinear.offline_pretrain.batch_size = 8192

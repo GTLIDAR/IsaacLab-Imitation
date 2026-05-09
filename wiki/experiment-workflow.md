@@ -150,9 +150,55 @@ A bilinear job with offline pretraining enabled:
     --video \
     --algo IPMD_BILINEAR \
     --kit_args=--/app/extensions/fsWatcherEnabled=false \
+    agent.logger.project_name=G1-Imitation-RLOpt-Pretrain \
+    agent.ipmd.use_latent_command=true \
+    agent.bilinear.policy_include_raw_state=false \
     agent.bilinear.offline_pretrain.enabled=true \
     agent.bilinear.offline_pretrain.num_updates=2000 \
     agent.logger.exp_name=ipmd_bilinear_offline_full_4096
+```
+
+For now, treat `IPMD_BILINEAR` as a latent-command experiment surface. The
+vanilla/non-latent-command path is useful for debugging only until it is
+explicitly fixed and revalidated.
+
+For the current pretrain/scratch/frozen comparison, use:
+
+```bash
+experiments/bilinear_pretrain/submit_cluster_ablation.sh
+```
+
+By default this submits one seed for five feature-only variants at
+`num_envs=4096`, `max_iterations=1024`, and logs them to W&B project
+`G1-Imitation-RLOpt-Pretrain`. This is a 100M-frame budget because each rollout
+iteration collects `4096 * 24` frames. The script sets
+`agent.bilinear.policy_include_raw_state=false` so the policy sees `F(s)z`, not
+`concat(F(s)z, s)`. The default variants are `scratch`,
+`pretrained_finetune`, `pretrained_frozen`, `random_frozen`, and
+`pretrained_bc_finetune`. The BC variant runs offline policy BC after SR
+pretraining using reconstructed expert actions. Set `DRY_RUN=1` to print the
+commands, or set `SEEDS="2024 2025 2026"` for a three-seed sweep.
+
+To test whether the offline stage is long enough, run the pretrained+finetune
+update-count sweep:
+
+```bash
+DRY_RUN=1 experiments/bilinear_pretrain/submit_pretrain_update_sweep.sh
+experiments/bilinear_pretrain/submit_pretrain_update_sweep.sh
+```
+
+The default update counts are `500 1000 2000 4000`. Override them with:
+
+```bash
+UPDATE_COUNTS="1000 2000 4000 8000" \
+experiments/bilinear_pretrain/submit_pretrain_update_sweep.sh
+```
+
+Summarize the offline SR traces in W&B with:
+
+```bash
+python experiments/bilinear_pretrain/summarize_pretrain_wandb.py \
+    --group g1_bilinear_sr_pretrain_feature_only_4096
 ```
 
 Cluster jobs append the default full G1 manifest unless the submitted command
@@ -206,6 +252,7 @@ Important files:
 Use explicit experiment names:
 
 ```bash
+agent.logger.project_name=<separate_wandb_project>
 agent.logger.exp_name=<short_descriptive_name>
 agent.logger.group_name=<optional_group_name>
 ```

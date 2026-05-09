@@ -25,8 +25,16 @@ cat <<EOT > job.sh
 #SBATCH --nodelist=dendrite,synapse
 #SBATCH --qos=short
 
+echo "[INFO] GPU status before job"
+nvidia-smi
+
 # Pass the container profile first to run_singularity.sh, then all arguments intended for the executed script
 bash $quoted_run_singularity_path $quoted_workspace_root $quoted_container_profile $quoted_job_args
+job_status=\$?
+
+echo "[INFO] GPU status after job"
+nvidia-smi
+exit \$job_status
 EOT
 sbatch < job.sh
 rm job.sh
