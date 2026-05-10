@@ -262,7 +262,7 @@ def test_expert_action_request_raises_when_reconstruction_unavailable() -> None:
         env.sample_expert_batch(3, ["expert_action"])
 
 
-def test_expert_sampler_provides_policy_proprioceptive_terms() -> None:
+def test_expert_sampler_provides_bilinear_policy_transition_terms() -> None:
     env = _make_uninitialized_env(num_envs=2)
     reconstructed_action = torch.tensor(
         [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]], dtype=torch.float32
@@ -279,6 +279,22 @@ def test_expert_sampler_provides_policy_proprioceptive_terms() -> None:
             ),
             "joint_pos": torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
             "joint_vel": torch.tensor([[0.5, 0.6], [0.7, 0.8], [0.9, 1.0]]),
+            ("next", "root_pos"): torch.zeros(3, 3),
+            ("next", "root_quat"): torch.tensor(
+                [[1.0, 0.0, 0.0, 0.0]]
+            ).repeat(3, 1),
+            ("next", "root_lin_vel"): torch.tensor(
+                [[1.5, 2.5, 3.5], [4.5, 5.5, 6.5], [7.5, 8.5, 9.5]]
+            ),
+            ("next", "root_ang_vel"): torch.tensor(
+                [[1.1, 1.2, 1.3], [1.4, 1.5, 1.6], [1.7, 1.8, 1.9]]
+            ),
+            ("next", "joint_pos"): torch.tensor(
+                [[1.5, 2.5], [3.5, 4.5], [5.5, 6.5]]
+            ),
+            ("next", "joint_vel"): torch.tensor(
+                [[1.5, 1.6], [1.7, 1.8], [1.9, 2.0]]
+            ),
         },
         batch_size=[3],
         device=env.device,
@@ -320,14 +336,29 @@ def test_expert_sampler_provides_policy_proprioceptive_terms() -> None:
     batch = env.sample_expert_batch(
         3,
         [
+            ("policy", "expert_motion"),
+            ("policy", "expert_anchor_pos_b"),
+            ("policy", "expert_anchor_ori_b"),
             ("policy", "base_ang_vel"),
             ("policy", "joint_pos_rel"),
             ("policy", "joint_vel_rel"),
             ("policy", "last_action"),
+            ("next", "policy", "base_ang_vel"),
+            ("next", "policy", "joint_pos_rel"),
+            ("next", "policy", "joint_vel_rel"),
             "expert_action",
         ],
     )
 
+    assert torch.equal(
+        batch[("policy", "expert_motion")],
+        torch.cat([expert_frame["joint_pos"], expert_frame["joint_vel"]], dim=-1),
+    )
+    assert torch.equal(batch[("policy", "expert_anchor_pos_b")], torch.zeros(3, 3))
+    expected_anchor_ori = torch.zeros(3, 6)
+    expected_anchor_ori[:, 0] = 1.0
+    expected_anchor_ori[:, 4] = 1.0
+    assert torch.equal(batch[("policy", "expert_anchor_ori_b")], expected_anchor_ori)
     assert torch.equal(batch[("policy", "base_ang_vel")], expert_frame["root_ang_vel"])
     assert torch.allclose(
         batch[("policy", "joint_pos_rel")],
@@ -338,6 +369,18 @@ def test_expert_sampler_provides_policy_proprioceptive_terms() -> None:
         torch.tensor([[0.49, 0.58], [0.67, 0.76], [0.89, 0.98]]),
     )
     assert torch.equal(batch[("policy", "last_action")], torch.zeros(3, 2))
+    assert torch.equal(
+        batch[("next", "policy", "base_ang_vel")],
+        expert_frame[("next", "root_ang_vel")],
+    )
+    assert torch.allclose(
+        batch[("next", "policy", "joint_pos_rel")],
+        torch.tensor([[1.4, 2.3], [3.2, 4.1], [5.4, 6.3]]),
+    )
+    assert torch.allclose(
+        batch[("next", "policy", "joint_vel_rel")],
+        torch.tensor([[1.49, 1.58], [1.67, 1.76], [1.89, 1.98]]),
+    )
     assert torch.equal(batch["expert_action"], reconstructed_action)
 
 

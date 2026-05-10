@@ -399,9 +399,15 @@ def resolve_agent_cfg_entry_point(
     raise ValueError(msg)
 
 
-args_cli.agent = resolve_agent_cfg_entry_point(
-    args_cli.task, args_cli.agent, args_cli.algorithm
-)
+try:
+    args_cli.agent = resolve_agent_cfg_entry_point(
+        args_cli.task, args_cli.agent, args_cli.algorithm
+    )
+except Exception:
+    logger.exception("Failed to resolve RLOpt agent config.")
+    logging.shutdown()
+    # Isaac shutdown can normalize early setup failures to exit code 0.
+    os._exit(1)
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -586,10 +592,13 @@ if __name__ == "__main__":
     try:
         # run the main function
         main()
-    # except (KeyboardInterrupt, SystemExit) as e:
-    # don't want the error goes silently
-    except Exception as e:
-        print(e)
+        if wandb.run is not None:
+            wandb.finish(exit_code=0)
+    except Exception:
+        logger.exception("Unhandled exception during RLOpt training.")
+        logging.shutdown()
+        # Isaac shutdown can normalize training failures to exit code 0.
+        os._exit(1)
     finally:
         # close sim app
         simulation_app.close()  # type: ignore
