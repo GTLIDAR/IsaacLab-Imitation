@@ -13,6 +13,9 @@ Start with:
   representation learning with inverse RL / adversarial reward learning.
 - [Experiment Workflow](experiment-workflow.md): local tests, full cluster job
   submission, and experiment tracking conventions.
+- [LeRobot Offline Pretraining](lerobot-offline-pretraining.md): Unitree WBT
+  LeRobot ingestion, TorchRL cache ownership, replay/debug commands, and the
+  current RTX re-image note.
 - [Current Status](current-status.md): dated snapshot of the current branch and
   high-value repo context.
 

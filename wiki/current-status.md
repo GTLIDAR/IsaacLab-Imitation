@@ -1,6 +1,6 @@
 # Current Status
 
-Last refreshed: 2026-05-07.
+Last refreshed: 2026-05-11.
 
 This page is intentionally dated. Update it when a branch lands or when the
 active experiment direction changes.
@@ -8,10 +8,10 @@ active experiment direction changes.
 ## Branch Snapshot
 
 - Current branch: `feature/ipmd-offline-spectral-pretrain`.
-- `IsaacLab-Imitation` is ahead of `origin/feature/ipmd-offline-spectral-pretrain`
-  by the local agent-context wiki commit.
 - Sibling `../RLOpt` is the active algorithm branch for the offline bilinear
-  pretrain recovery work.
+  pretrain and offline dataset cache work.
+- Sibling `../ImitationLearningTools` owns reusable LeRobot dataset ingestion
+  utilities.
 
 ## High-Value Repo Context
 
@@ -29,6 +29,9 @@ active experiment direction changes.
   `rlopt_<algo>_cfg_entry_point` registry entries.
 - `ImitationRLEnv.sample_expert_batch(...)` is the env-owned expert sampling
   surface used by imitation algorithms.
+- `ImitationRLEnv.get_offline_dataset_mapper_params()` is the env-owned surface
+  that exports G1 action offsets and action scale for external offline dataset
+  mappers.
 
 ## Current Task Surfaces
 
@@ -39,6 +42,63 @@ active experiment direction changes.
   Current working assumption: run bilinear experiments on the latent-command
   task surface for now. The non-latent-command bilinear path is not a trusted
   surface until it is fixed and revalidated.
+
+## 2026-05-11 LeRobot Streaming Offline Dataset
+
+Current approach: use LeRobot as the remote storage and streaming format, then
+convert Unitree WBT episodes into canonical TensorDict transitions before they
+enter a local TorchRL replay cache. Training samples from the local cache only.
+
+First dataset:
+
+```text
+unitreerobotics/G1_WBT_Brainco_Pickup_Pillow
+```
+
+Second target after the mapper is validated:
+
+```text
+unitreerobotics/G1_WBT_Brainco_Collect_Plates_Into_Dishwasher
+```
+
+Implementation split:
+
+- `../ImitationLearningTools` adds `UnitreeG1WBT29DofMapper` and
+  `StreamingTensorDictReplayCache`.
+- `../RLOpt` adds `OfflineDatasetConfig`, background LeRobot-to-TorchRL cache
+  construction, and offline sampler selection for IPMD/bilinear pretraining.
+- This repo adds env-owned action mapper constants, the latent G1 bilinear default
+  Unitree WBT dataset config, and replay/preview scripts.
+
+The Unitree WBT dataset does not expose qvel, so the first mapper finite
+differences velocities per episode. That is acceptable for the first low
+dimensional pretrain path, but it should be treated as a mapper choice rather
+than a claim about measured robot velocity.
+
+Validation policy:
+
+- Validate schema, widths, action scale, and env action-offset compatibility at
+  mapper/cache/agent construction.
+- Do not add per-iteration schema guards in the optimizer loop.
+
+Debugging tools:
+
+- `scripts/preview_unitree_lerobot_episode.py` pulls a bounded streaming subset
+  and writes PNG/GIF/NPZ previews without Isaac Sim.
+- `scripts/replay_unitree_lerobot_reference.py` replays
+  `observation.state.robot_q_current` on the Isaac G1 model once RTX rendering
+  works.
+
+RTX rendering status:
+
+- Clean conda env `SL` with Python 3.11, Torch `2.7.0+cu128`, and Isaac Sim
+  `5.1.0.0` still crashes in the RTX/Hydra startup path.
+- The current host is Ubuntu 25.10 with NVIDIA driver `595.58.03`.
+- PyTorch CUDA sees the RTX A4500, so this is not basic CUDA visibility.
+- Re-image target is Ubuntu 22.04 or 24.04 with NVIDIA driver `580.65.06`.
+
+See [LeRobot Offline Pretraining](lerobot-offline-pretraining.md) for the
+current command surface and re-image verification checklist.
 
 ## 2026-05-07 Offline Bilinear Pretrain Recovery
 

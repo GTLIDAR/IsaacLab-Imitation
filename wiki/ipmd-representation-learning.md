@@ -159,11 +159,24 @@ Use these as working hypotheses, not settled facts:
 
 ## Current Offline Pretrain Status
 
-As of 2026-05-07, the immediate recovery target is the bilinear SR warm-start
-path, not yet the full offline IRL/GAIL objective. The current implementation
-uses expert trajectory batches from `sample_expert_batch(...)`, reconstructed
-reference actions from transition-aligned next joint positions, and next policy
-observations for the SR target.
+As of 2026-05-11, there are two offline-data paths:
+
+- env-owned expert batches from `sample_expert_batch(...)`
+- remote Unitree WBT LeRobot datasets streamed into a local TorchRL TensorDict
+  replay cache
+
+The immediate recovery target is still the bilinear SR warm-start path, not yet
+the full offline IRL/GAIL objective. The LeRobot path starts with
+`unitreerobotics/G1_WBT_Brainco_Pickup_Pillow` and maps low-dimensional
+`robot_q_current` / `robot_q_desired` episodes into the same bilinear G1
+TensorDict contract before training samples are drawn.
+
+The Unitree WBT data does not currently provide qvel. The first mapper computes
+joint and base angular velocities by finite differencing inside each episode.
+This is a practical bootstrap choice, not a measured-velocity assumption.
+
+See [LeRobot Offline Pretraining](lerobot-offline-pretraining.md) for the
+dataset/cache contract and the current re-image checklist.
 
 The recovered local test ladder is:
 

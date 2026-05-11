@@ -77,6 +77,20 @@ agent.bilinear.offline_pretrain.enabled=true \
 agent.bilinear.offline_pretrain.num_updates=10
 ```
 
+For LeRobot-backed offline pretraining, keep the task latent and enable the
+offline dataset cache explicitly:
+
+```bash
+--task Isaac-Imitation-G1-Latent-v0 \
+--algo IPMD_BILINEAR \
+agent.bilinear.offline_pretrain.enabled=true \
+agent.offline_dataset.enabled=true
+```
+
+The default first dataset for the G1 bilinear config is
+`unitreerobotics/G1_WBT_Brainco_Pickup_Pillow`. The full command surface and
+re-image notes live in [LeRobot Offline Pretraining](lerobot-offline-pretraining.md).
+
 The `--kit_args=--/app/extensions/fsWatcherEnabled=false` override is useful on
 local machines where Isaac Kit file watcher startup fails under resource
 pressure.

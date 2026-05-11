@@ -167,6 +167,13 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.bilinear.offline_pretrain.batch_size = 8192
         self.bilinear.offline_pretrain.log_interval = 100
 
+        self.offline_dataset.source = "lerobot_stream"
+        self.offline_dataset.repo_id = "unitreerobotics/G1_WBT_Brainco_Pickup_Pillow"
+        self.offline_dataset.mapper = "unitree_g1_wbt_29dof"
+        self.offline_dataset.cache_storage = "torchrl_memmap"
+        self.offline_dataset.fps = 30.0
+        self.offline_dataset.quat_order = "wxyz"
+
 
 @configclass
 class G1ImitationRLOptIPMDBilinearConfig(_G1ImitationRLOptIPMDBilinearBaseConfig):
