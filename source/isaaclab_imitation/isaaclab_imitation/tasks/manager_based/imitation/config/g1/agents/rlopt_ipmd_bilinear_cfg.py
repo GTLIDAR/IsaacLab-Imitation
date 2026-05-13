@@ -12,6 +12,22 @@ from isaaclab_imitation.tasks.manager_based.imitation.config.g1.agents.rlopt_ipm
     VANILLA_POLICY_INPUT_KEYS,
 )
 
+UNITREE_G1_WBT_LEROBOT_REPO_IDS: list[str] = [
+    "unitreerobotics/G1_WBT_Inspire_Collect_Clothes_MainCamOnly",
+    "unitreerobotics/G1_WBT_Inspire_Pickup_Pillow_MainCamOnly",
+    "unitreerobotics/G1_WBT_Inspire_Put_Clothes_into_Washing_Machine_MainCamOnly",
+    "unitreerobotics/G1_WBT_Brainco_Collect_Plates_Into_Dishwasher",
+    "unitreerobotics/G1_WBT_Brainco_Pickup_Pillow",
+    "unitreerobotics/G1_WBT_Inspire_Put_Clothes_into_Washing_Machine",
+    "unitreerobotics/G1_WBT_Brainco_Make_The_Bed",
+    "unitreerobotics/G1_WBT_Inspire_Put_Clothes_Into_Basket",
+    "unitreerobotics/G1_WBT_Dex1_Put_Clothes_into_Washing_Machine",
+    "unitreerobotics/G1_WBT_Inspire_Put_Drinks_Into_Fridge",
+    "unitreerobotics/G1_WBT_Inspire_Put_Vegetables_Into_Basket",
+    "unitreerobotics/G1_WBT_Brainco_Pick_Up_Medicine",
+    "unitreerobotics/G1_WBT_Inspire_Pick_Up_Drinks",
+]
+
 BILINEAR_OBS_KEYS: list[tuple[str, str]] = [
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
@@ -166,6 +182,14 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.bilinear.offline_pretrain.num_updates = 2000
         self.bilinear.offline_pretrain.batch_size = 8192
         self.bilinear.offline_pretrain.log_interval = 100
+
+        self.offline_dataset.source = "lerobot_stream"
+        self.offline_dataset.repo_id = "unitreerobotics/G1_WBT_Brainco_Pickup_Pillow"
+        self.offline_dataset.repo_ids = list(UNITREE_G1_WBT_LEROBOT_REPO_IDS)
+        self.offline_dataset.mapper = "unitree_g1_wbt_29dof"
+        self.offline_dataset.cache_storage = "torchrl_memmap"
+        self.offline_dataset.fps = 30.0
+        self.offline_dataset.quat_order = "wxyz"
 
 
 @configclass

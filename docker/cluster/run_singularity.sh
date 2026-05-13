@@ -219,7 +219,7 @@ fi
 # Construct PYTHONPATH entries from synced repos.
 # NOTE: We intentionally avoid "IsaacLab/source" because it makes "isaaclab" a namespace package
 # (no __file__), which can break wandb/pydantic introspection in torchrl logging.
-extra_pythonpath_rel="${CLUSTER_EXTRA_PYTHONPATH_REL:-IsaacLab/source/isaaclab:IsaacLab/source/isaaclab_tasks:IsaacLab/source/isaaclab_assets:IsaacLab/source/isaaclab_rl:IsaacLab/source/isaaclab_mimic:source/isaaclab_imitation:unitree_rl_lab/source/unitree_rl_lab:RLOpt:ImitationLearningTools}"
+extra_pythonpath_rel="${CLUSTER_EXTRA_PYTHONPATH_REL:-IsaacLab/source/isaaclab:IsaacLab/source/isaaclab_tasks:IsaacLab/source/isaaclab_assets:IsaacLab/source/isaaclab_rl:IsaacLab/source/isaaclab_mimic:source/isaaclab_imitation:RLOpt:ImitationLearningTools}"
 container_pythonpath_prefix=""
 IFS=':' read -ra extra_pythonpath_items <<< "$extra_pythonpath_rel"
 for rel_path in "${extra_pythonpath_items[@]}"; do

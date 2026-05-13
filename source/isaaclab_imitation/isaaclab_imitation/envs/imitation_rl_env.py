@@ -17,6 +17,7 @@ from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import (
     FRAME_MARKER_CFG,
 )
+from isaaclab_imitation.assets.robots import UNITREE_G1_WBT_29DOF_DATASET_JOINT_NAMES
 from tensordict import TensorDict
 
 logger = logging.getLogger(__name__)
@@ -36,13 +37,27 @@ def _get_mdp_compiled_module() -> Any:
 # Import the new manager and utilities
 try:
     from iltools.datasets.lafan1.loader import Lafan1CsvLoader
-    from iltools.datasets.loco_mujoco.loader import LocoMuJoCoLoader
+    from iltools.datasets.loaders import load_dataset_loader
     from iltools.datasets.manager import ParallelTrajectoryManager, ResetSchedule
     from iltools.datasets.utils import make_rb_from
 except ImportError as e:
     raise ImportError(
         f"Failed to import required modules from iltools_datasets: {e}. Make sure ImitationLearningTools is installed."
     ) from e
+
+
+def _load_loco_mujoco_loader() -> type[Any]:
+    """Import the optional Loco-MuJoCo loader only when requested."""
+    try:
+        loader_cls = load_dataset_loader("loco_mujoco")
+    except ImportError as exc:
+        raise ImportError(
+            "loader_type='loco_mujoco' requires the optional loco-mujoco "
+            "dependencies. Install ImitationLearningTools with its "
+            "`loco-mujoco` extra or select a different loader such as "
+            "'lafan1_csv'."
+        ) from exc
+    return loader_cls
 
 
 class ImitationRLEnv(ManagerBasedRLEnv):
@@ -72,8 +87,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         dataset_path = '/path/to/zarr'
         reset_schedule = 'random'  # or 'sequential', 'round_robin', 'custom'
         wrap_steps = False
-        loader_type = 'loco_mujoco'  # or 'lafan1_csv'
-        loader_kwargs = {'env_name': 'UnitreeG1', 'cfg': {...}}
+        loader_type = 'lafan1_csv'  # or 'loco_mujoco' when its optional dependency is installed
+        loader_kwargs = {'dataset': {'trajectories': {'lafan1_csv': [...]}}}
         reference_joint_names = ['left_hip_pitch_joint', ...]
     """
 
@@ -150,7 +165,8 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                     from omegaconf import DictConfig
 
                     loader_cfg = DictConfig(loader_kwargs)
-                    _ = LocoMuJoCoLoader(
+                    loader_cls = _load_loco_mujoco_loader()
+                    _ = loader_cls(
                         env_name=loader_kwargs["env_name"],
                         cfg=loader_cfg,
                         build_zarr_dataset=True,
@@ -572,6 +588,103 @@ class ImitationRLEnv(ManagerBasedRLEnv):
                 )
             return value.to(device=template.device, dtype=template.dtype)
         return torch.full_like(template, float(value))
+
+    @staticmethod
+    def _resolve_offline_static_action_vector(
+        value: torch.Tensor | float,
+        *,
+        name: str,
+        width: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Resolve an env-invariant action parameter for offline dataset mapping."""
+        if isinstance(value, torch.Tensor):
+            tensor = value.detach().to(device=device, dtype=torch.float32)
+            if tensor.ndim == 2:
+                reference = tensor[0]
+                if tensor.shape[0] > 1 and not torch.allclose(
+                    tensor, reference.unsqueeze(0)
+                ):
+                    raise ValueError(
+                        f"offline_dataset mapper requires env-invariant {name}."
+                    )
+                tensor = reference
+            elif tensor.ndim != 1:
+                raise ValueError(f"Unexpected {name} shape {tuple(tensor.shape)}.")
+        else:
+            tensor = torch.full((width,), float(value), device=device)
+        if tuple(tensor.shape) != (width,):
+            raise ValueError(
+                f"{name} must have shape ({width},), got {tuple(tensor.shape)}."
+            )
+        return tensor
+
+    @staticmethod
+    def _resolve_offline_action_vector_pool(
+        value: torch.Tensor | float,
+        *,
+        name: str,
+        width: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Resolve one or more env-indexed action vectors for offline mapping."""
+        if isinstance(value, torch.Tensor):
+            tensor = value.detach().to(device=device, dtype=torch.float32)
+            if tensor.ndim == 1:
+                tensor = tensor.unsqueeze(0)
+            elif tensor.ndim != 2:
+                raise ValueError(f"Unexpected {name} shape {tuple(tensor.shape)}.")
+        else:
+            tensor = torch.full((1, width), float(value), device=device)
+        if tensor.shape[0] <= 0 or tuple(tensor.shape[1:]) != (width,):
+            raise ValueError(
+                f"{name} must have shape (N, {width}), got {tuple(tensor.shape)}."
+            )
+        return tensor
+
+    def get_offline_dataset_mapper_params(self) -> dict[str, Any]:
+        """Return G1 action inversion constants for offline TensorDict mapping."""
+        action_term = self.action_manager.get_term("joint_pos")
+        if not isinstance(action_term, JointPositionAction):
+            raise TypeError(
+                "offline_dataset G1 WBT mapper requires JointPositionAction."
+            )
+
+        action_joint_names = list(action_term._joint_names)
+        action_width = len(action_joint_names)
+        if action_width != 29:
+            raise ValueError(
+                "offline_dataset unitree_g1_wbt_29dof mapper requires 29 action "
+                f"joints, got {action_width}."
+            )
+        self.robot.find_joints(action_joint_names, preserve_order=True)
+        action_offset_pool = self._resolve_offline_action_vector_pool(
+            action_term._offset,
+            name="JointPositionAction offset",
+            width=action_width,
+            device=self.device,
+        )
+        action_scale = self._resolve_offline_static_action_vector(
+            action_term._scale,
+            name="JointPositionAction scale",
+            width=action_width,
+            device=self.device,
+        )
+        if torch.any(action_scale.abs() <= 1.0e-8):
+            raise ValueError("JointPositionAction scale must not contain zeros.")
+        default_root_height = float(
+            self.robot.data.default_root_state[0, 2].detach().cpu().item()
+        )
+        return {
+            "default_joint_pos": action_offset_pool[0].cpu().tolist(),
+            "default_joint_pos_pool": action_offset_pool.cpu().tolist(),
+            "action_scale": action_scale.cpu().tolist(),
+            "default_root_height": default_root_height,
+            "align_root_z_to_default": True,
+            "dataset_joint_names": list(UNITREE_G1_WBT_29DOF_DATASET_JOINT_NAMES),
+            "target_joint_names": action_joint_names,
+            "joint_names": action_joint_names,
+        }
 
     def _raw_to_processed_action(
         self,
@@ -2788,7 +2901,7 @@ class ImitationRLEnv(ManagerBasedRLEnv):
         if not self._reference_vel_vis_enabled:
             return
 
-        # Desired reference body (root) location and current robot root — frame markers like unitree_rl_lab
+        # Desired reference body (root) location and current robot root.
         goal_cfg = FRAME_MARKER_CFG.copy()
         goal_cfg.prim_path = "/Visuals/Imitation/reference_root_goal"
         goal_cfg.markers["frame"].scale = (0.2, 0.2, 0.2)
