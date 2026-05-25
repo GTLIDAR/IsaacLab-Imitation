@@ -139,7 +139,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 5_000_000_000
-        self.save_interval = 5_000_000  # samples
+        self.save_interval = 100  # rollout iterations
 
         # Debug: latent posterior input mirrors the env-owned frame-t reference
         # command slices directly.
