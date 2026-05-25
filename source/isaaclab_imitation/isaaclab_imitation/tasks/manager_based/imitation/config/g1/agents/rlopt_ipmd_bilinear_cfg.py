@@ -165,20 +165,36 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.ipmd.diversity_target = 0.0
         self.ipmd.latent_uniformity_temperature = 2.0
 
-        self.ipmd.reward_input_type = "s"
-        self.ipmd.use_estimated_rewards_for_ppo = False
+        self.ipmd.reward_input_type = "s"  # ignored by bilinear_linear path
+        self.ipmd.use_estimated_rewards_for_ppo = True
         self.ipmd.expert_batch_size = int(self.loss.mini_batch_size)
         self.ipmd.bc_coef = 0.0
         self.compile.compile = False
-        # self.trainer.progress_bar = False
-        # self.trainer.log_interval = 10_000_000
+
+        # Output bounds. The bilinear reward head bounds in [reward_floor, reward_max] itself;
+        # these are belt-and-suspenders for mixing.
         self.ipmd.reward_output_scale = 1.0
-        self.ipmd.estimated_reward_clamp_min = -1.0
+        self.ipmd.estimated_reward_clamp_min = 0.0
         self.ipmd.estimated_reward_clamp_max = 1.0
-        self.ipmd.est_reward_weight = 1.0
+
+        # Pure IRL objective: PPO sees only the learned reward. The env reward is
+        # retained separately for logging/proxy diagnostics.
+        self.ipmd.env_reward_weight = 0.0
+        self.ipmd.est_reward_weight = 0.1
+        self.ipmd.estimated_reward_done_penalty = 1.0
+
+        # Slow reward updates relative to policy (policy lr is 1e-3).
+        self.ipmd.reward_lr = 1.0e-4
+        self.ipmd.reward_update_interval = 4
+        self.ipmd.reward_update_warmup_updates = 0
+        self.ipmd.reward_updates_per_policy_update = 1
+
+        # Loss coefficients for the IPMD adversarial objective on the bilinear head.
         self.ipmd.reward_loss_coeff = 1.0
-        self.ipmd.reward_l2_coeff = 0.0
-        self.ipmd.reward_grad_penalty_coeff = 0.0
+        self.ipmd.reward_l2_coeff = 0.05
+        self.ipmd.reward_grad_penalty_coeff = 0.0  # phi is detached, GP is meaningless
+        self.ipmd.reward_logit_reg_coeff = 0.01
+        self.ipmd.reward_param_weight_decay_coeff = 1.0e-3
         self.collector.no_cuda_sync = True
 
         # Collector latents should consume the same observation-manager channel
@@ -195,6 +211,14 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
         self.bilinear.offline_pretrain.batch_size = 8192
         self.bilinear.offline_pretrain.log_interval = 100
         self.bilinear.offline_pretrain.policy_bc_train_latent = False
+
+        # Bilinear linear reward head: r = r_floor + (r_max - r_floor) * sigmoid(theta^T LN(phi) + b).
+        self.bilinear.reward_kind = "bilinear_linear"
+        self.bilinear.reward_max = 1.0
+        self.bilinear.reward_floor = 0.0
+        self.bilinear.reward_use_layernorm = True
+        self.bilinear.reward_margin = 0.25
+        self.bilinear.reward_temp = 0.1
 
         self.offline_dataset.source = "lerobot_stream"
         self.offline_dataset.repo_id = "unitreerobotics/G1_WBT_Brainco_Pickup_Pillow"
