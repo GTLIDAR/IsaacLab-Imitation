@@ -25,13 +25,20 @@ VANILLA_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "last_action"),
 ]
 
-LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "latent_command"),
+LATENT_COMMAND_INPUT_KEYS: list[tuple[str, str]] = [
+    ("command", "latent_command"),
+]
+
+LATENT_POLICY_RAW_STATE_KEYS: list[tuple[str, str]] = [
     ("policy", "base_ang_vel"),
     ("policy", "joint_pos_rel"),
     ("policy", "joint_vel_rel"),
     ("policy", "last_action"),
 ]
+
+LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = (
+    LATENT_COMMAND_INPUT_KEYS + LATENT_POLICY_RAW_STATE_KEYS
+)
 
 LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
     ("policy", "expert_motion"),
@@ -41,10 +48,7 @@ LATENT_POSTERIOR_INPUT_KEYS: list[tuple[str, str]] = [
 
 LATENT_PRIOR_INPUT_KEYS: list[tuple[str, str]] = []
 
-LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "expert_motion"),
-    ("critic", "expert_anchor_pos_b"),
-    ("critic", "expert_anchor_ori_b"),
+LATENT_CRITIC_STATE_KEYS: list[tuple[str, str]] = [
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "base_lin_vel"),
@@ -53,6 +57,10 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "joint_vel_rel"),
     ("critic", "last_action"),
 ]
+
+LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = (
+    LATENT_COMMAND_INPUT_KEYS + LATENT_CRITIC_STATE_KEYS
+)
 
 REWARD_INPUT_KEYS: list[tuple[str, str]] = [
     ("reward_input", "expert_motion"),
@@ -85,7 +93,7 @@ class _G1ImitationRLOptIPMDBaseConfig(IPMDRLOptConfig):
             LATENT_POSTERIOR_INPUT_KEYS
         )
         self.ipmd.latent_learning.prior_input_keys = list(LATENT_PRIOR_INPUT_KEYS)
-        self.ipmd.latent_key = ("policy", "latent_command")
+        self.ipmd.latent_key = LATENT_COMMAND_INPUT_KEYS[0]
         self.ipmd.use_latent_command = use_latent_command
 
     def __post_init__(self):

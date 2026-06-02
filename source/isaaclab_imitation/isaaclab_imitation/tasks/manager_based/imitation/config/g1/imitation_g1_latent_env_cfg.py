@@ -24,10 +24,18 @@ class G1LatentObservationCfg:
     """Latent-conditioned observation settings for the 29-DoF tracking environment."""
 
     @configclass
+    class CommandCfg(ObsGroup):
+        """Agent command observations shared by policy and critic configs."""
+
+        latent_command = ObsTerm(func=mdp.agent_latent_command)
+
+        def __post_init__(self):
+            self.concatenate_terms = False
+
+    @configclass
     class PolicyCfg(ObsGroup):
         """Policy observations."""
 
-        latent_command = ObsTerm(func=mdp.agent_latent_command)
         # baseline test
         expert_motion = ObsTerm(
             func=mdp.expert_motion_command,
@@ -77,19 +85,6 @@ class G1LatentObservationCfg:
     class CriticCfg(ObsGroup):
         """Privileged critic observations."""
 
-        latent_command = ObsTerm(func=mdp.agent_latent_command)
-        expert_motion = ObsTerm(
-            func=mdp.expert_motion_command,
-            params=_g1_expert_motion_obs_params(),
-        )
-        expert_anchor_pos_b = ObsTerm(
-            func=mdp.expert_anchor_pos_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
-        expert_anchor_ori_b = ObsTerm(
-            func=mdp.expert_anchor_ori_b,
-            params=_g1_expert_anchor_obs_params(),
-        )
         body_pos = ObsTerm(
             func=mdp.robot_body_pos_b,
             params=_g1_tracked_body_obs_params(),
@@ -136,6 +131,7 @@ class G1LatentObservationCfg:
             self.concatenate_terms = False
 
     policy: PolicyCfg = PolicyCfg()
+    command: CommandCfg = CommandCfg()
     critic: CriticCfg = CriticCfg()
     expert_state: ExpertStateCfg = ExpertStateCfg()
     expert_window: ExpertWindowCfg = ExpertWindowCfg()

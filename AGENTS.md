@@ -130,6 +130,16 @@ pixi reinstall -e isaaclab rlopt iltools isaaclab-imitation
   and set `CLUSTER_G1_MANIFEST_PATH` to the Dance102 manifest before submitting.
   If that `CLUSTER_G1_MANIFEST_PATH` line is commented out, it means the job is
   using the default 40 trajectories.
+- For local Isaac Sim, NVIDIA, CUDA, or other GPU-backed experiment runs, use an
+  unsandboxed shell so the process can see the real NVIDIA driver and device
+  state. Launch long-running experiments inside a named `tmux` session so they
+  can be inspected or killed cleanly later:
+
+```bash
+tmux new -s ipmd-bilinear-smoke
+# run the experiment command inside the session
+tmux kill-session -t ipmd-bilinear-smoke
+```
 
 ## Validation
 

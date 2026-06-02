@@ -3,8 +3,11 @@ from isaaclab.utils import configclass
 from rlopt.agent import ASERLOptConfig
 
 
-LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
-    ("policy", "latent_command"),
+LATENT_COMMAND_INPUT_KEYS: list[tuple[str, str]] = [
+    ("command", "latent_command"),
+]
+
+LATENT_POLICY_RAW_STATE_KEYS: list[tuple[str, str]] = [
     ("policy", "projected_gravity"),
     ("policy", "body_pos"),
     ("policy", "body_ori"),
@@ -15,8 +18,11 @@ LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = [
     ("policy", "last_action"),
 ]
 
-LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
-    ("critic", "latent_command"),
+LATENT_POLICY_INPUT_KEYS: list[tuple[str, str]] = (
+    LATENT_COMMAND_INPUT_KEYS + LATENT_POLICY_RAW_STATE_KEYS
+)
+
+LATENT_CRITIC_STATE_KEYS: list[tuple[str, str]] = [
     ("critic", "body_pos"),
     ("critic", "body_ori"),
     ("critic", "projected_gravity"),
@@ -28,6 +34,10 @@ LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = [
     ("critic", "joint_vel"),
     ("critic", "last_action"),
 ]
+
+LATENT_CRITIC_INPUT_KEYS: list[tuple[str, str]] = (
+    LATENT_COMMAND_INPUT_KEYS + LATENT_CRITIC_STATE_KEYS
+)
 
 EXPERT_INPUT_KEYS: list[tuple[str, str]] = [
     ("expert_state", "joint_pos"),
@@ -83,7 +93,7 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.value_function.num_cells = [512, 256, 128]
 
         self.collector.total_frames = 30000 * 4096 * 24
-        self.save_interval = 5_000_000   # samples
+        self.save_interval = 5_000_000  # samples
 
         self.gail.expert_batch_size = int(self.loss.mini_batch_size)
         self.gail.discriminator_updates_per_policy_update = 1
@@ -105,7 +115,7 @@ class G1ImitationRLOptASEConfig(ASERLOptConfig):
         self.gail.amp_reward_scale = 1.0
 
         self.ase.latent_dim = 64
-        self.ase.latent_key = ("policy", "latent_command")
+        self.ase.latent_key = LATENT_COMMAND_INPUT_KEYS[0]
         self.ase.latent_steps_min = 30
         self.ase.latent_steps_max = 120
         self.ase.command_source = "random"

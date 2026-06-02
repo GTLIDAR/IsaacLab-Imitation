@@ -3,8 +3,10 @@ from isaaclab.utils import configclass
 from isaaclab_imitation.envs.rlopt import IPMDBilinearRLOptConfig
 
 from isaaclab_imitation.tasks.manager_based.imitation.config.g1.agents.rlopt_ipmd_cfg import (
-    LATENT_CRITIC_INPUT_KEYS,
+    LATENT_COMMAND_INPUT_KEYS,
+    LATENT_CRITIC_STATE_KEYS,
     LATENT_POLICY_INPUT_KEYS,
+    LATENT_POLICY_RAW_STATE_KEYS,
     LATENT_POSTERIOR_INPUT_KEYS,
     LATENT_PRIOR_INPUT_KEYS,
     REWARD_INPUT_KEYS,
@@ -62,26 +64,38 @@ class _G1ImitationRLOptIPMDBilinearBaseConfig(IPMDBilinearRLOptConfig):
 
     def sync_input_keys(self) -> None:
         use_latent_command = bool(self.ipmd.use_latent_command)
-        self.policy.input_keys = (
-            list(LATENT_POLICY_INPUT_KEYS)
-            if use_latent_command
-            else list(VANILLA_POLICY_INPUT_KEYS)
-        )
-        if self.value_function is not None:
-            self.value_function.input_keys = (
-                list(LATENT_CRITIC_INPUT_KEYS)
-                if use_latent_command
-                else list(VANILLA_CRITIC_INPUT_KEYS)
+        if use_latent_command:
+            self.policy.input_keys = list(LATENT_COMMAND_INPUT_KEYS) + list(
+                LATENT_POLICY_RAW_STATE_KEYS
             )
+            if self.value_function is not None:
+                self.value_function.input_keys = list(LATENT_COMMAND_INPUT_KEYS) + list(
+                    LATENT_CRITIC_STATE_KEYS
+                )
+            self.ipmd.latent_key = LATENT_COMMAND_INPUT_KEYS[0]
+            self.bilinear.obs_keys = list(LATENT_CRITIC_STATE_KEYS)
+            self.bilinear.next_obs_keys = list(LATENT_CRITIC_STATE_KEYS)
+            self.bilinear.value_command_keys = list(LATENT_COMMAND_INPUT_KEYS)
+            self.bilinear.value_state_keys = list(LATENT_CRITIC_STATE_KEYS)
+            self.bilinear.policy_input_mode = "raw"
+            self.bilinear.value_input_mode = "linear_fz"
+        else:
+            self.policy.input_keys = list(VANILLA_POLICY_INPUT_KEYS)
+            if self.value_function is not None:
+                self.value_function.input_keys = list(VANILLA_CRITIC_INPUT_KEYS)
+            self.ipmd.latent_key = LATENT_POLICY_INPUT_KEYS[0]
+            self.bilinear.obs_keys = list(BILINEAR_OBS_KEYS)
+            self.bilinear.next_obs_keys = list(BILINEAR_NEXT_OBS_KEYS)
+            self.bilinear.value_command_keys = []
+            self.bilinear.value_state_keys = None
+            self.bilinear.policy_input_mode = "bilinear"
+            self.bilinear.value_input_mode = "mlp"
         self.ipmd.reward_input_keys = list(REWARD_INPUT_KEYS)
         self.ipmd.latent_learning.posterior_input_keys = list(
             LATENT_POSTERIOR_INPUT_KEYS
         )
         self.ipmd.latent_learning.prior_input_keys = list(LATENT_PRIOR_INPUT_KEYS)
-        self.ipmd.latent_key = ("policy", "latent_command")
         self.ipmd.use_latent_command = use_latent_command
-        self.bilinear.obs_keys = list(BILINEAR_OBS_KEYS)
-        self.bilinear.next_obs_keys = list(BILINEAR_NEXT_OBS_KEYS)
 
     def __post_init__(self):
         super().__post_init__()
