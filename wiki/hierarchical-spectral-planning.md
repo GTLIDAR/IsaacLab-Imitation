@@ -13,6 +13,378 @@ is proprioceptive-only and unchanged. The "skill code" `z` is the bottleneck
 between the two — it's a direction in the spectral coefficient space the
 low-level was trained against, and the high-level learns to navigate that space.
 
+## Current Offline Skill-DiffSR Direction (June 8, 2026)
+
+The active near-term path is an offline, state-only high-level skill
+representation learner. This is deliberately earlier than the vision-language
+planner described below. The immediate goal is to learn a macro skill code `z`
+from expert future windows and verify that it carries useful transition
+information before wiring it into low-level control.
+
+Current v1 objective:
+
+```text
+s_t, window_t = s_{t+1:t+W}, s_next = s_{t+W}
+z_t = E_skill(s_t, window_t)
+DiffSR: phi_W(s_t, z_t) = g(z_t)^T F_state(s_t)
+target = s_next
+```
+
+Important constraints for future agents:
+
+- This phase is offline high-level representation learning only.
+- Do not modify `IPMD_BILINEAR` for this path; it has a separate trainer.
+- Do not align `z_t` with the low-level latent command space yet.
+- Do not detach `z_t`; DiffSR loss must backpropagate through `E_skill`.
+- State features are exactly `expert_motion`, `expert_anchor_pos_b`, and
+  `expert_anchor_ori_b`, using the same torso-relative construction as the
+  `expert_window` observation group.
+
+Implemented files:
+
+| Surface | File |
+|---|---|
+| Isaac macro sampler | `source/isaaclab_imitation/isaaclab_imitation/envs/imitation_rl_env.py` |
+| TorchRL wrapper hook | `source/isaaclab_imitation/isaaclab_imitation/envs/rlopt.py` |
+| RLOpt trainer | `RLOpt/rlopt/agent/hl_skill_diffsr.py` |
+| Training script | `scripts/rlopt/train_hl_skill_diffsr.py` |
+| RLOpt tests | `RLOpt/tests/test_hl_skill_diffsr.py` |
+| Isaac sampler tests | `source/isaaclab_imitation/test_reference_patch_env.py` |
+
+Default v1 settings:
+
+```text
+W = 25
+z_dim = 256
+DiffSR feature_dim = 128
+DiffSR embed_dim = 512
+batch_size = 8192
+num_updates = 2000
+train_split = train
+eval_split = eval
+eval_trajectory_fraction = 0.1
+```
+
+Training command used for the first full local pass:
+
+```bash
+pixi run -e isaaclab env TERM=xterm PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1   python scripts/rlopt/train_hl_skill_diffsr.py   --headless   --task Isaac-Imitation-G1-Latent-v0   --num_envs 16   env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json
+```
+
+The first full pass completed with the original all-trajectory sampler behavior
+before train/eval splits were added. Final diagnostics were healthy:
+
+```text
+loss_real_z_eval     ~= 1.31
+loss_shuffled_z_eval ~= 50.25
+loss_zero_z_eval     ~= 34.18
+z_effective_rank     ~= 130 / 256
+z_dim_std_mean       ~= 0.63
+```
+
+A later Dance102 rerun with `--reconstruction_eval` still used all trajectories
+because the Dance102 manifest loads as one trajectory. Its grouped sampled
+reconstruction diagnostic showed the sampled target error was mostly in
+`expert_motion`, not anchor terms:
+
+```text
+loss_real_z_eval      ~= 1.43
+loss_shuffled_z_eval  ~= 49.16
+loss_zero_z_eval      ~= 39.66
+sample_recon_mse      ~= 0.414
+expert_motion_mse     ~= 0.412
+anchor_pos_mse        ~= 0.000095
+anchor_ori_mse        ~= 0.0021
+```
+
+The first true multi-trajectory LAFAN1 run used
+`data/lafan1/manifests/g1_lafan1_manifest.json` with a separate zarr cache at
+`data/lafan1/g1_hl_diffsr`. Do not use the existing `data/lafan1/g1` cache for
+this experiment unless it has been rebuilt; it was stale and contained only the
+old `dance102/trajectory_0` tree. The LAFAN1 cache built 40 trajectories and
+441,080 transitions. Final held-out diagnostics were:
+
+```text
+loss_real_z_eval      ~= 3.23
+loss_shuffled_z_eval  ~= 139.39
+loss_zero_z_eval      ~= 47.76
+z_effective_rank      ~= 108.6 / 256
+z_dim_std_mean        ~= 0.298
+sample_recon_mse      ~= 2.384
+expert_motion_mse     ~= 2.365
+anchor_pos_mse        ~= 0.0059
+anchor_ori_mse        ~= 0.0135
+```
+
+For these diagnostics, `sample_recon_mse` is not a reconstruction over the full
+25-step future window. The encoder consumes `s_{t+1:t+W}`, but DiffSR samples
+only the macro target state `s_{t+W}`. The metric is the per-sample sum of
+squared error over the one-step macro target state, averaged over the batch;
+`sample_recon_dim_mse` is the scalar mean over batch and dimensions. Grouped
+metrics such as `expert_motion_mse` apply the same target-state calculation to
+that feature slice only.
+
+Ablations on the same 40-trajectory LAFAN1 cache:
+
+| Run dir | W | z_dim | real | shuffled | zero | rank | sample_recon_mse | motion_mse | anchor_pos_mse | anchor_ori_mse |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `2026-06-08_13-26-41` | 25 | 256 | 3.23 | 139.39 | 47.76 | 108.6 | 2.384 | 2.365 | 0.0059 | 0.0135 |
+| `2026-06-08_13-47-11` | 25 | 128 | 3.43 | 140.51 | 53.29 | 76.9 | 2.927 | 2.905 | 0.0071 | 0.0148 |
+| `2026-06-08_13-49-34` | 50 | 256 | 3.79 | 144.18 | 54.24 | 108.5 | 2.945 | 2.887 | 0.0220 | 0.0359 |
+| `2026-06-08_13-52-17` | 100 | 256 | 4.05 | 144.61 | 49.48 | 109.9 | 3.867 | 3.664 | 0.1451 | 0.0575 |
+
+All four runs pass the core real-vs-shuffled/zero and non-collapse checks. The
+128D compression is viable but loses reconstruction quality. Longer horizons
+remain useful through W=100, with expected growth in sampled target error,
+especially anchor position at W=100.
+
+A seeded repeat pass then reran the two most useful candidates on the same
+40-trajectory LAFAN1 cache, with `--reconstruction_eval`, `--seed {0,1,2}`,
+and the post-train held-out eval path. The trainer now seeds Python, Torch,
+CUDA, and the Isaac env config. It also logs `norm_sample_recon_*`
+diagnostics, where each target-state feature dimension's squared error is
+divided by the held-out batch variance before averaging. These normalized
+metrics make the anchor terms easier to compare with `expert_motion`.
+
+Run dirs:
+
+- `logs/hl_skill_diffsr/lafan1_w25_z256_seed0_norm`
+- `logs/hl_skill_diffsr/lafan1_w25_z256_seed1_norm`
+- `logs/hl_skill_diffsr/lafan1_w25_z256_seed2_norm`
+- `logs/hl_skill_diffsr/lafan1_w50_z256_seed0_norm`
+- `logs/hl_skill_diffsr/lafan1_w50_z256_seed1_norm`
+- `logs/hl_skill_diffsr/lafan1_w50_z256_seed2_norm`
+
+Seeded LAFAN1 aggregate, mean +/- sample std over three seeds:
+
+| W | z_dim | real | shuffled | zero | rank | z_std | sample_recon_mse | sample_recon_dim_mse | norm_recon_dim_mse | norm_motion_dim_mse | norm_anchor_pos_dim_mse | norm_anchor_ori_dim_mse |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 25 | 256 | 3.26 +/- 0.24 | 144.10 +/- 2.18 | 50.65 +/- 2.97 | 107.6 +/- 0.1 | 0.289 +/- 0.006 | 2.90 +/- 0.93 | 0.0433 +/- 0.0139 | 0.0377 +/- 0.0019 | 0.0344 +/- 0.0027 | 0.102 +/- 0.016 | 0.0382 +/- 0.0042 |
+| 50 | 256 | 3.39 +/- 0.24 | 150.18 +/- 1.79 | 52.24 +/- 4.38 | 108.4 +/- 0.3 | 0.280 +/- 0.003 | 2.79 +/- 0.18 | 0.0416 +/- 0.0027 | 0.0410 +/- 0.0059 | 0.0365 +/- 0.0034 | 0.127 +/- 0.076 | 0.0413 +/- 0.0036 |
+
+Both seeded candidates pass the stage acceptance checks. Keep `W=25,z_dim=256`
+as the clean baseline: it has comparable spectral separation and rank, slightly
+lower normalized target-state error, and much less anchor-position variance.
+`W=50,z_dim=256` remains viable when the downstream high level needs a slower
+macro timescale, but do not claim it is better from raw `sample_recon_mse`
+alone because that sampled diagnostic is stochastic and scale-sensitive.
+
+A follow-up eval-only linear probe was added to test whether frozen `z` carries
+information about the whole future window, not just the terminal macro target.
+The probe fits closed-form ridge regressions on train-split batches and reports
+held-out MSE for `z`, shuffled `z`, state-only, and mean baselines. This does
+not update `E_skill` or DiffSR.
+
+Probe commands used seed-0 checkpoints with `--window_probe_train_batches 8`,
+`--window_probe_eval_batches 4`, and `--reconstruction_eval`:
+
+```bash
+pixi run -e isaaclab env TERM=xterm PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 \
+  python scripts/rlopt/train_hl_skill_diffsr.py \
+  --headless --task Isaac-Imitation-G1-Latent-v0 --num_envs 16 --seed 0 \
+  --checkpoint logs/hl_skill_diffsr/lafan1_w25_z256_seed0_norm/checkpoints/latest.pt \
+  --eval_only --reconstruction_eval --window_probe_eval \
+  --window_probe_train_batches 8 --window_probe_eval_batches 4 \
+  --output_dir logs/hl_skill_diffsr/lafan1_w25_z256_seed0_window_probe_eval \
+  env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json \
+  env.dataset_path=./data/lafan1/g1_hl_diffsr
+```
+
+Window-probe held-out diagnostics:
+
+| Checkpoint | W | z_dim | z_dim_mse | shuffled_z_dim_mse | state_dim_mse | mean_dim_mse | z_norm_dim_mse | z_first_dim_mse | z_mid_dim_mse | z_final_dim_mse |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `lafan1_w25_z256_seed0_norm` | 25 | 256 | 0.842 | 1.918 | 1.080 | 1.354 | 0.533 | 0.920 | 0.917 | 0.037 |
+| `lafan1_w50_z256_seed0_norm` | 50 | 256 | 1.068 | 1.740 | 1.218 | 1.363 | 0.697 | 1.113 | 1.200 | 0.031 |
+
+Interpretation: the original offline DiffSR objective makes `z` strongly
+terminal-target aware. Real `z` is better than shuffled `z`, state-only, and
+mean baselines over the full window, so it is not empty. However, most of the
+linear probe advantage is concentrated at `s_{t+W}`; early and mid-window states
+remain much harder. Do not treat the original checkpoint as a full-window motion
+compressor.
+
+On June 8, 2026, the trainer gained `encoder_window_mode`. The legacy `full`
+mode preserves old checkpoint compatibility:
+
+```text
+z = E_skill(s_t, s_{t+1:t+W})
+DiffSR target = s_{t+W}
+```
+
+The new `intermediate` mode hides the terminal target from the encoder:
+
+```text
+z = E_skill(s_t, s_{t+1:t+W-1})
+DiffSR target = s_{t+W}
+```
+
+This is the cleaner transition-learning setup because `z` cannot directly copy
+the exact target state that DiffSR is trained to predict. A full local pass used:
+
+```bash
+pixi run -e isaaclab env TERM=xterm PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 \
+  python scripts/rlopt/train_hl_skill_diffsr.py \
+  --headless --task Isaac-Imitation-G1-Latent-v0 --num_envs 16 --seed 0 \
+  --output_dir logs/hl_skill_diffsr/lafan1_w25_z256_seed0_intermediate \
+  --reconstruction_eval --window_probe_eval \
+  --window_probe_train_batches 8 --window_probe_eval_batches 4 \
+  --horizon_steps 25 --encoder_window_mode intermediate --z_dim 256 \
+  env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json \
+  env.dataset_path=./data/lafan1/g1_hl_diffsr
+```
+
+Single-seed comparison against the old W25/z256 seed-0 full-window checkpoint:
+
+| Mode | real | shuffled | zero | rank | z_std | sample_recon_mse | norm_recon_dim_mse | norm_motion_dim_mse | norm_anchor_pos_dim_mse | probe_z_dim_mse | probe_first | probe_mid | probe_final |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| full | 3.02 | 144.31 | 53.91 | 107.6 | 0.284 | 2.16 | 0.0358 | 0.0326 | 0.0999 | 0.842 | 0.920 | 0.917 | 0.037 |
+| intermediate | 4.95 | 122.51 | 45.48 | 111.4 | 0.296 | 6.18 | 0.0726 | 0.0587 | 0.3987 | 0.785 | 0.874 | 0.862 | 0.080 |
+
+Interpretation: `intermediate` is harder for endpoint DiffSR, as expected, and
+sampled terminal reconstruction worsens. It still passes the main acceptance
+checks by a large margin: real `z` is far better than shuffled and zero, and the
+latent rank does not collapse. It also improves the full-window linear probe
+(`0.785` vs `0.842`) and the first/mid-step probe errors, which is consistent
+with `z` representing the transition rather than only the terminal target. Use
+`intermediate` as the next research branch for valid transition learning. Keep
+`full` only as a legacy baseline and for evaluating old checkpoints.
+
+Acceptance signal for this stage remains:
+
+```text
+loss_real_z_eval < loss_shuffled_z_eval
+loss_real_z_eval < loss_zero_z_eval
+z_dim_std_mean is nontrivial
+z_effective_rank does not collapse below 10% of z_dim
+```
+
+Current debugging additions:
+
+- The Isaac sampler now supports deterministic `train` / `eval` trajectory
+  splits for held-out diagnostics.
+- The sampler exposes per-timestep macro-state feature slices.
+- `--reconstruction_eval` adds stochastic DiffSR sampled reconstruction errors:
+  `sample_recon_l1`, `sample_recon_mse`, `sample_recon_dim_mse`, plus grouped
+  versions for `expert_motion`, `expert_anchor_pos_b`, and
+  `expert_anchor_ori_b`.
+- The same eval now logs variance-normalized target-state errors:
+  `norm_sample_recon_dim_mse`,
+  `norm_sample_recon_expert_motion_dim_mse`,
+  `norm_sample_recon_expert_anchor_pos_b_dim_mse`, and
+  `norm_sample_recon_expert_anchor_ori_b_dim_mse`.
+- `--window_probe_eval` adds eval-only closed-form linear probes from frozen
+  `z` and frozen state features to the flattened future window. Use this only as
+  a diagnostic for whether `z` contains whole-window information.
+- `--encoder_window_mode intermediate` hides `s_{t+W}` from `E_skill` while
+  keeping `s_{t+W}` as the DiffSR target. This is the preferred mode for the
+  target-excluding transition-learning branch.
+- These reconstruction and probe numbers are diagnostics only; the training
+  objective is still the diffusion loss.
+
+Intermediate W25/z256 was repeated over seeds 0, 1, and 2 on June 8, 2026.
+The three-seed post-train aggregate was:
+
+| Metric | Mean | Std |
+|---|---:|---:|
+| `loss_real_z_eval` | 4.823 | 0.293 |
+| `loss_shuffled_z_eval` | 124.792 | 2.037 |
+| `loss_zero_z_eval` | 47.133 | 1.829 |
+| `z_effective_rank` | 111.573 | 0.289 |
+| `z_dim_std_mean` | 0.294 | 0.0019 |
+| `sample_recon_mse` | 5.952 | 0.222 |
+| `norm_sample_recon_dim_mse` | 0.0643 | 0.0079 |
+| `window_probe_z_dim_mse` | 0.775 | 0.0087 |
+| `window_probe_z_shuffled_dim_mse` | 1.983 | 0.0123 |
+| `window_probe_state_dim_mse` | 1.085 | 0.0048 |
+| `window_probe_z_step_first_dim_mse` | 0.877 | 0.0116 |
+| `window_probe_z_step_mid_dim_mse` | 0.850 | 0.0106 |
+| `window_probe_z_step_final_dim_mse` | 0.0788 | 0.0011 |
+
+Conclusion: the target-excluding intermediate setup is stable enough to use as
+our current frozen high-level encoder branch. It is not a solved whole-window
+reconstruction model, but it passes the offline DiffSR acceptance checks with
+healthy rank and strong real-vs-shuffled separation.
+
+On the same date, a first low-level offline-online bridge was added:
+
+- The Isaac env exposes `current_expert_macro_transition_batch(horizon_steps,
+  env_ids=None)` for live-env macro windows aligned to the current trajectory
+  cursor.
+- RLOpt IPMD accepts `agent.ipmd.command_source=hl_skill`.
+- `hl_skill` loads a frozen high-level DiffSR checkpoint, checks that checkpoint
+  `z_dim` matches `agent.ipmd.latent_dim`, computes current expert-window
+  latents online, holds them for `latent_steps_min/max`, and publishes them to
+  `latent_command`.
+- This path deliberately uses 256D commands directly. It does not silently map
+  the high-level latent to the old 64D command space.
+
+Smoke command that completed one online low-level rollout/update:
+
+```bash
+pixi run -e isaaclab env TERM=xterm WANDB_MODE=offline PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1   python scripts/rlopt/train.py   --headless --task Isaac-Imitation-G1-Latent-v0 --algo IPMD   --num_envs 16 --seed 0 --max_iterations 1 --log_interval 1   env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json   env.dataset_path=./data/lafan1/g1_hl_diffsr   env.latent_command_dim=256   agent.ipmd.latent_dim=256   agent.ipmd.command_source=hl_skill   agent.ipmd.hl_skill_checkpoint_path=logs/hl_skill_diffsr/lafan1_w25_z256_seed0_intermediate/checkpoints/latest.pt   agent.ipmd.hl_skill_horizon_steps=25   agent.ipmd.latent_steps_min=25   agent.ipmd.latent_steps_max=25   agent.ipmd.reward_loss_coeff=0.0   agent.ipmd.reward_l2_coeff=0.0   agent.ipmd.reward_grad_penalty_coeff=0.0   agent.ipmd.reward_logit_reg_coeff=0.0   agent.ipmd.reward_param_weight_decay_coeff=0.0
+```
+
+Smoke result: the env observation table showed `latent_command (256,)`, the
+policy built with 346 inputs including `latent_command`, and training completed
+`frames=384/384` for one iteration. This only validates plumbing; it is not a
+performance result.
+
+A short follow-up local validation used the same configuration with
+`--max_iterations 50` and completed `frames=19200/19200` in 79.79 seconds. Final
+progress-line values were `r_step=-0.0950`, `ep_len=7.5300`, `r_ep=-0.7430`, and
+`pi_loss=0.0071`. Treat these as stability/plumbing diagnostics only, not policy
+quality.
+
+June 8, 2026 update: the frozen `hl_skill` command path now mirrors the
+phase convention already implemented for the patch VQ-VAE learner. With
+`agent.ipmd.latent_learning.command_phase_mode=sin_cos`, the command published
+to the low-level policy is `cat([z_256, sin(2*pi*phase), cos(2*pi*phase)])`.
+For the current 256D high-level checkpoint, set `env.latent_command_dim=258` and
+`agent.ipmd.latent_dim=258`; leave `agent.ipmd.latent_learning.code_latent_dim`
+unset in Hydra because Isaac's config updater rejects integer overrides into a
+field whose current value is `None`. The code width is inferred as `258 - 2 =
+256`, and the sampler also validates that the checkpoint `z_dim` plus phase
+width equals `agent.ipmd.latent_dim`.
+
+A 4096-env LaFAN1 health pass completed with `--max_iterations 2`,
+`frames=196608/196608`, `latent_command (258,)`, and a policy input width of
+348. A full default-budget run was then launched with 4096 envs and no
+`--max_iterations`; the config aligned the default IPMD budget to
+`4,999,938,048` frames with `frames_per_batch=98,304`. The active run is:
+
+```text
+PID: 2216479
+launcher log: logs/rlopt/launch/hl_skill_lafan1_4096_sincos_full_20260608_1638.log
+run dir: logs/rlopt/ipmd/Isaac-Imitation-G1-Latent-v0/2026-06-08_16-38-16
+checkpoint: logs/hl_skill_diffsr/lafan1_w25_z256_seed0_intermediate/checkpoints/latest.pt
+```
+
+Important operational note: the G1 IPMD config currently sets
+`save_interval=100`, but RLOpt interprets `save_interval` in frames, not rollout
+iterations. At 4096 envs this saves every rollout and will create hundreds of GB
+of checkpoints over a full 5B-frame run. The active run was relaunched with
+`agent.save_interval=100000000`, so it checkpoints roughly every 100M frames.
+At first metrics it reached `iter=51/50862`, `frames=5013504/4999938048`,
+`r_step=-0.0334`, `r_ep=-0.1377`, `pi_loss=-0.0088`, and `fps=37847.1072`.
+
+Next recommended steps:
+
+1. Run a longer low-level frozen-encoder job with `command_source=hl_skill`,
+   still using env rewards first and keeping IPMD reward-model updates disabled.
+2. Log frozen-command diagnostics during low-level training, especially command
+   RMS/std/effective rank, command refresh cadence, episode return, and tracking
+   reward terms.
+3. If online training is unstable, improve the high-level objective before
+   scaling: try multi-horizon DiffSR or an auxiliary terminal/window objective.
+4. Only add a 256D-to-64D adapter if we explicitly train and evaluate that
+   adapter. Do not treat it as an implicit compatibility shim.
+
+## Longer-Term VL Planner Context
+
+The sections below describe the larger GR00T-style hierarchical planner idea.
+Treat them as roadmap context, not the active v1 implementation path.
+
 ## Two-Timescale Planning and Control
 
 The central decomposition is a two-timescale hierarchy. The high-level planner

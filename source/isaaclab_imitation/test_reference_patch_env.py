@@ -19,11 +19,69 @@ from isaaclab.envs.manager_based_rl_env import ManagerBasedRLEnv  # noqa: E402
 from isaaclab_imitation.envs.imitation_rl_env import ImitationRLEnv  # noqa: E402
 
 
+class _WindowReplayBuffer:
+    def __init__(self, *, max_step: int) -> None:
+        self._max_step = int(max_step)
+        self._trajectory_width = self._max_step + 1
+
+    def __getitem__(self, indices):
+        index_tensor = torch.as_tensor(indices, dtype=torch.long)
+        local_steps = index_tensor % self._trajectory_width
+        joint_pos = local_steps.to(dtype=torch.float32).unsqueeze(-1)
+        joint_vel = joint_pos + 10.0
+        body_pos = torch.zeros(*index_tensor.shape, 1, 3)
+        body_pos[..., 0, 0] = local_steps.to(dtype=torch.float32)
+        body_quat = torch.zeros(*index_tensor.shape, 1, 4)
+        body_quat[..., 0, 0] = 1.0
+        return TensorDict(
+            {
+                "joint_pos": joint_pos,
+                "joint_vel": joint_vel,
+                "xpos": body_pos,
+                "xquat": body_quat,
+            },
+            batch_size=list(index_tensor.shape),
+        )
+
+
 class _WindowTrajectoryManager:
     def __init__(self, *, max_step: int, env_steps: torch.Tensor) -> None:
         self._state_device = torch.device("cpu")
+        self._storage_device = torch.device("cpu")
+        self._device = None
         self._max_step = int(max_step)
         self.env_step = env_steps.to(dtype=torch.long, device=self._state_device)
+        self.env_traj_rank = torch.arange(
+            int(self.env_step.numel()),
+            dtype=torch.long,
+            device=self._state_device,
+        )
+        self._length = torch.full(
+            (int(self.env_step.numel()),),
+            self._max_step + 1,
+            dtype=torch.long,
+            device=self._state_device,
+        )
+        self._start = torch.arange(
+            int(self.env_step.numel()),
+            dtype=torch.long,
+            device=self._state_device,
+        ) * (self._max_step + 1)
+        self._end = self._start + self._length
+        self.rb = _WindowReplayBuffer(max_step=self._max_step)
+
+    def _attach_reference_fields(self, td, use_buffers=False):
+        return td
+
+    def sample_random_transitions(self, batch_size: int):
+        env_ids = torch.arange(
+            int(batch_size),
+            dtype=torch.long,
+            device=self._state_device,
+        ) % int(self.env_step.numel())
+        local_steps = self.env_step.index_select(0, env_ids)
+        global_indices = self._start.index_select(0, env_ids) + local_steps
+        return TensorDict({}, batch_size=[batch_size]), env_ids, global_indices
 
     def sample_slice(self, batch_size, env_ids, start_steps, mode):
         assert mode == "independent"
@@ -192,8 +250,8 @@ def _make_env_for_patch_tests() -> ImitationRLEnv:
     env._mdp_reference_body_quat_key = "xquat"
     env._mdp_expert_window_obs_cache = {}
     env._ensure_mdp_step_cache = lambda: None
-    env._get_joint_ids_tensor_fast = (
-        lambda joint_ids: joint_ids
+    env._get_joint_ids_tensor_fast = lambda joint_ids: (
+        joint_ids
         if isinstance(joint_ids, slice)
         else torch.as_tensor(joint_ids, dtype=torch.long, device=env.device)
     )
@@ -230,12 +288,12 @@ def _make_env_for_expert_action_sampler(
         torch.arange(batch_size, device=env.device) % env.num_envs,
         torch.arange(batch_size, device=env.device),
     )
-    env._expert_local_steps_from_global_indices = (
-        lambda env_ids, global_indices: torch.zeros_like(global_indices)
+    env._expert_local_steps_from_global_indices = lambda env_ids, global_indices: (
+        torch.zeros_like(global_indices)
     )
     if reconstructed_action is not None:
-        env._sample_reconstructed_reference_actions = (
-            lambda global_indices, env_ids: reconstructed_action[: env_ids.shape[0]]
+        env._sample_reconstructed_reference_actions = lambda global_indices, env_ids: (
+            reconstructed_action[: env_ids.shape[0]]
         )
     env._map_requested_expert_observations = lambda *args, **kwargs: TensorDict(
         {},
@@ -280,21 +338,15 @@ def test_expert_sampler_provides_bilinear_policy_transition_terms() -> None:
             "joint_pos": torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]),
             "joint_vel": torch.tensor([[0.5, 0.6], [0.7, 0.8], [0.9, 1.0]]),
             ("next", "root_pos"): torch.zeros(3, 3),
-            ("next", "root_quat"): torch.tensor(
-                [[1.0, 0.0, 0.0, 0.0]]
-            ).repeat(3, 1),
+            ("next", "root_quat"): torch.tensor([[1.0, 0.0, 0.0, 0.0]]).repeat(3, 1),
             ("next", "root_lin_vel"): torch.tensor(
                 [[1.5, 2.5, 3.5], [4.5, 5.5, 6.5], [7.5, 8.5, 9.5]]
             ),
             ("next", "root_ang_vel"): torch.tensor(
                 [[1.1, 1.2, 1.3], [1.4, 1.5, 1.6], [1.7, 1.8, 1.9]]
             ),
-            ("next", "joint_pos"): torch.tensor(
-                [[1.5, 2.5], [3.5, 4.5], [5.5, 6.5]]
-            ),
-            ("next", "joint_vel"): torch.tensor(
-                [[1.5, 1.6], [1.7, 1.8], [1.9, 2.0]]
-            ),
+            ("next", "joint_pos"): torch.tensor([[1.5, 2.5], [3.5, 4.5], [5.5, 6.5]]),
+            ("next", "joint_vel"): torch.tensor([[1.5, 1.6], [1.7, 1.8], [1.9, 2.0]]),
         },
         batch_size=[3],
         device=env.device,
@@ -313,11 +365,11 @@ def test_expert_sampler_provides_bilinear_policy_transition_terms() -> None:
         torch.arange(batch_size, device=env.device) % env.num_envs,
         torch.arange(batch_size, device=env.device),
     )
-    env._expert_local_steps_from_global_indices = (
-        lambda env_ids, global_indices: torch.zeros_like(global_indices)
+    env._expert_local_steps_from_global_indices = lambda env_ids, global_indices: (
+        torch.zeros_like(global_indices)
     )
-    env._sample_reconstructed_reference_actions = (
-        lambda global_indices, env_ids: reconstructed_action[: env_ids.shape[0]]
+    env._sample_reconstructed_reference_actions = lambda global_indices, env_ids: (
+        reconstructed_action[: env_ids.shape[0]]
     )
     env._transform_reference_pose_to_world = (
         lambda ref_pos, ref_quat=None, env_ids=None: (ref_pos, ref_quat)
@@ -460,6 +512,99 @@ def test_get_current_expert_window_term_returns_motion_window() -> None:
         [[0.0, 10.0, 0.0, 10.0, 1.0, 11.0], [3.0, 13.0, 4.0, 14.0, 4.0, 14.0]]
     )
     assert torch.equal(motion, expected)
+
+
+def test_expert_macro_sampler_returns_expected_shapes() -> None:
+    env = _make_env_for_patch_tests()
+
+    batch = env.sample_expert_macro_transition_batch(batch_size=2, horizon_steps=2)
+
+    assert batch.get(("hl", "state")).shape == (2, 11)
+    assert batch.get(("hl", "future_window")).shape == (2, 2, 11)
+    assert batch.get(("hl", "target")).shape == (2, 11)
+    assert env.expert_macro_feature_slices(horizon_steps=2) == {
+        "expert_motion": (0, 2),
+        "expert_anchor_pos_b": (2, 5),
+        "expert_anchor_ori_b": (5, 11),
+    }
+
+
+def test_expert_macro_sampler_train_eval_splits_are_disjoint() -> None:
+    env = _make_env_for_patch_tests()
+
+    train_ranks = env._expert_macro_split_trajectory_ranks(
+        split="train",
+        eval_fraction=0.5,
+        split_seed=0,
+    )
+    eval_ranks = env._expert_macro_split_trajectory_ranks(
+        split="eval",
+        eval_fraction=0.5,
+        split_seed=0,
+    )
+
+    assert set(train_ranks.tolist()).isdisjoint(set(eval_ranks.tolist()))
+    assert sorted([*train_ranks.tolist(), *eval_ranks.tolist()]) == [0, 1]
+
+
+def test_expert_macro_sampler_target_is_last_future_state() -> None:
+    env = _make_env_for_patch_tests()
+
+    batch = env.sample_expert_macro_transition_batch(batch_size=2, horizon_steps=3)
+
+    assert torch.equal(
+        batch.get(("hl", "target")),
+        batch.get(("hl", "future_window"))[:, -1, :],
+    )
+
+
+def test_expert_macro_sampler_clamps_near_end_windows() -> None:
+    env = _make_env_for_patch_tests()
+
+    batch = env.sample_expert_macro_transition_batch(batch_size=2, horizon_steps=3)
+
+    near_end_motion = batch.get(("hl", "future_window"))[1, :, :2]
+    expected = torch.tensor(
+        [[4.0, 14.0], [4.0, 14.0], [4.0, 14.0]],
+        dtype=torch.float32,
+    )
+    assert torch.equal(near_end_motion, expected)
+
+
+def test_expert_macro_sampler_rejects_nonpositive_horizon() -> None:
+    env = _make_env_for_patch_tests()
+
+    with pytest.raises(ValueError, match="horizon_steps"):
+        env.sample_expert_macro_transition_batch(batch_size=2, horizon_steps=0)
+
+
+def test_current_expert_macro_sampler_returns_expected_shapes() -> None:
+    env = _make_env_for_patch_tests()
+
+    batch = env.current_expert_macro_transition_batch(horizon_steps=2)
+
+    assert batch.get(("hl", "state")).shape == (2, 11)
+    assert batch.get(("hl", "future_window")).shape == (2, 2, 11)
+    assert batch.get(("hl", "target")).shape == (2, 11)
+    assert torch.equal(
+        batch.get(("hl", "target")),
+        batch.get(("hl", "future_window"))[:, -1, :],
+    )
+
+
+def test_current_expert_macro_sampler_accepts_env_id_subset() -> None:
+    env = _make_env_for_patch_tests()
+
+    batch = env.current_expert_macro_transition_batch(
+        horizon_steps=3,
+        env_ids=torch.tensor([1]),
+    )
+
+    assert batch.get(("hl", "state")).shape == (1, 11)
+    assert torch.equal(
+        batch.get(("hl", "future_window"))[0, :, :2],
+        torch.tensor([[4.0, 14.0], [4.0, 14.0], [4.0, 14.0]]),
+    )
 
 
 def test_sync_reference_cursor_updates_target_frame_only() -> None:
