@@ -10,7 +10,15 @@ from collections.abc import Mapping
 
 import gymnasium as gym
 import torch
-from rlopt.agent import FastSACRLOptConfig, FastTD3RLOptConfig, IPMDBilinearRLOptConfig, IPMDRLOptConfig, IPMDSRRLOptConfig, PPORLOptConfig, SACRLOptConfig  # noqa: F401
+from rlopt.agent import (  # noqa: F401
+    FastSACRLOptConfig,
+    FastTD3RLOptConfig,
+    IPMDBilinearRLOptConfig,
+    IPMDRLOptConfig,
+    IPMDSRRLOptConfig,
+    PPORLOptConfig,
+    SACRLOptConfig,
+)
 from rlopt.config_base import RLOptConfig  # noqa: F401
 from torchrl.data.tensor_specs import Composite, Unbounded
 from torchrl.envs.libs.gym import (
@@ -92,6 +100,37 @@ class IsaacLabWrapper(GymWrapper):
         return self._base_isaac_env().sample_expert_batch(
             batch_size=batch_size,
             required_keys=required_keys,
+        )
+
+    def sample_expert_macro_transition_batch(
+        self,
+        batch_size: int,
+        horizon_steps: int,
+        split: str | None = None,
+        eval_fraction: float = 0.1,
+        split_seed: int = 0,
+    ):
+        return self._base_isaac_env().sample_expert_macro_transition_batch(
+            batch_size=batch_size,
+            horizon_steps=horizon_steps,
+            split=split,
+            eval_fraction=eval_fraction,
+            split_seed=split_seed,
+        )
+
+    def current_expert_macro_transition_batch(
+        self,
+        horizon_steps: int,
+        env_ids=None,
+    ):
+        return self._base_isaac_env().current_expert_macro_transition_batch(
+            horizon_steps=horizon_steps,
+            env_ids=env_ids,
+        )
+
+    def expert_macro_feature_slices(self, horizon_steps: int):
+        return self._base_isaac_env().expert_macro_feature_slices(
+            horizon_steps=horizon_steps,
         )
 
     def set_agent_latent_command(self, latent_command, env_ids=None):
