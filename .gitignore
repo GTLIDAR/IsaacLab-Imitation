@@ -63,7 +63,8 @@ _build
 /offline_dataset_cache/
 
 # Tests
-tests/
+tests/*
+!tests/test_*.py
 
 # Docker history
 .isaac-lab-docker-history

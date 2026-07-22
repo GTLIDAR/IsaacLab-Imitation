@@ -181,7 +181,7 @@ validate_local_budget() {
 
 audit_motion_body_frames() {
     local report="${RUN_ROOT_BASE}/body_frame_audit.json"
-    run_cmd pixi run python scripts/audit_g1_lafan1_body_frames.py \
+    run_cmd pixi run python scripts/data/audit_g1_lafan1_body_frames.py \
         --manifest "${MANIFEST_PATH}" \
         --report "${report}"
 }

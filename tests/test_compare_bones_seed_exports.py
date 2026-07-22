@@ -9,7 +9,12 @@ import sys
 import torch
 
 
-SCRIPT = Path(__file__).with_name("compare_bones_seed_exports.py")
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "data"
+    / "compare_bones_seed_exports.py"
+)
 
 
 def _sha256(path: Path) -> str:

@@ -58,7 +58,7 @@ FRAMES_PER_BATCH="$((NUM_ENVS * FRAMES_PER_ENV_BATCH))"
 MAX_ITERATIONS="$(((TARGET_FRAMES + FRAMES_PER_BATCH - 1) / FRAMES_PER_BATCH))"
 EFFECTIVE_FRAMES="$((MAX_ITERATIONS * FRAMES_PER_BATCH))"
 mkdir -p "${OUTPUT_ROOT}"
-pixi run python scripts/audit_g1_lafan1_body_frames.py \
+pixi run python scripts/data/audit_g1_lafan1_body_frames.py \
   --manifest "${MANIFEST}" \
   --report "${OUTPUT_ROOT}/body_frame_audit.json"
 

@@ -86,7 +86,7 @@ elif (( BASE_CUMULATIVE_FRAMES != 0 )); then
     exit 2
 fi
 
-pixi run python scripts/audit_g1_lafan1_body_frames.py \
+pixi run python scripts/data/audit_g1_lafan1_body_frames.py \
     --manifest "${MANIFEST}" \
     --report "${OUTPUT_ROOT}/body_frame_audit.json"
 

@@ -7,7 +7,12 @@ from pathlib import Path
 
 import numpy as np
 
-SCRIPT = Path(__file__).with_name("audit_bones_seed_phase5.py")
+SCRIPT = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "data"
+    / "audit_bones_seed_phase5.py"
+)
 
 
 def _write_motion(path: Path, *, offset: tuple[float, float, float]) -> None:

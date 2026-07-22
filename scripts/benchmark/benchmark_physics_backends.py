@@ -17,7 +17,7 @@ Run from the repo root through Pixi:
     pixi run -e isaaclab bench-backends
 
     # Custom
-    pixi run -e isaaclab python scripts/benchmark_physics_backends.py \
+    pixi run -e isaaclab python scripts/benchmark/benchmark_physics_backends.py \
         --backends physx newton_mjwarp --num_envs 4096 --iterations 102
 """
 
@@ -32,7 +32,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MANIFEST = "./data/unitree/manifests/g1_unitree_dance102_manifest.json"
 # RLOpt PPO collects num_envs * FRAMES_PER_BATCH frames per iteration.
 FRAMES_PER_BATCH = 24

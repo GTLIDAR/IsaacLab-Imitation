@@ -123,11 +123,11 @@ if [[ "${DRY_RUN}" != "1" && "${needs_split}" == "1" && ! -f "${FULL_MANIFEST}" 
 
 Prepare the local G1 LAFAN1 data first, for example:
 
-  ./scripts/download_g1_lafan1_data.sh
+  ./scripts/data/download_g1_lafan1_data.sh
 
 or, if NPZ files already exist:
 
-  "${PYTHON_CMD[@]}" scripts/write_lafan1_npz_manifest.py \\
+  "${PYTHON_CMD[@]}" scripts/data/write_lafan1_npz_manifest.py \\
       --npz_dir data/lafan1/npz/g1 \\
       --manifest_path data/lafan1/manifests/g1_lafan1_manifest.json
 EOF

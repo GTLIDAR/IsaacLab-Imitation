@@ -11,7 +11,7 @@ set -euo pipefail
 # (Latent-Strict-v0, legacy/local optimizer contract) at 8192 envs x 12
 # steps, minibatch 12288, capped at 3B frames. Uses the SONIC-exclusion-
 # filtered manifest (91/100 motions; 9 dropped by
-# scripts/filter_bones_seed_sonic_exclusions.py using the exact keyword list
+# scripts/data/filter_bones_seed_sonic_exclusions.py using the exact keyword list
 # from the public SONIC release's filter_and_copy_bones_data.py). This is
 # not a Phase-5 planner run.
 

@@ -57,7 +57,7 @@ for pair in "${MOTIONS[@]}"; do
   echo "===== rank $RANK  $MOTION ====="
   set +e
   OMNI_KIT_ACCEPT_EULA=YES ACCEPT_EULA=Y PRIVACY_CONSENT=Y TORCHDYNAMO_DISABLE=1 \
-  pixi run -e isaaclab python scripts/compare_policy_reference.py \
+  pixi run -e isaaclab python scripts/eval/compare_policy_reference.py \
     --headless --device "$DEVICE" --seed "$SEED" \
     --task Isaac-Imitation-G1-Latent-v0 --algo IPMD_BILINEAR \
     --checkpoint "$LOW" \

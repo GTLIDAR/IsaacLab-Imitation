@@ -31,7 +31,7 @@ fi
 
 cmd=(
   env OMNI_KIT_ACCEPT_EULA=YES
-  pixi run -e isaaclab python scripts/compare_policy_reference_all.py
+  pixi run -e isaaclab python scripts/eval/compare_policy_reference_all.py
   --task "${TASK}"
   --algorithm "${ALGORITHM}"
   --checkpoint "${CHECKPOINT}"

@@ -14,7 +14,7 @@ the generic LAFAN1 converter:
 
 Run it from the repo root with the Isaac Lab Pixi environment, for example:
 
-    pixi run -e isaaclab python scripts/prepare_bones_seed_subset.py \
+    pixi run -e isaaclab python scripts/data/prepare_bones_seed_subset.py \
         --archive data/bones_seed/raw/g1.tar.gz --headless --device cuda:0
 """
 
@@ -38,7 +38,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_SHORTLIST = (
     REPO_ROOT / "data" / "bones_seed" / "curated" / "bones_seed_10_shortlist.timeline.json"
 )
@@ -358,7 +358,7 @@ def _write_language_sidecar(
 def _run_converter(args: argparse.Namespace) -> None:
     cmd = [
         sys.executable,
-        str(REPO_ROOT / "scripts" / "prepare_lafan1_from_csv.py"),
+        str(REPO_ROOT / "scripts" / "data" / "prepare_lafan1_from_csv.py"),
         "--csv_dir",
         str(args.csv_dir),
         "--npz_dir",

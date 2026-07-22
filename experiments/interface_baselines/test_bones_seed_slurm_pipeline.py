@@ -186,7 +186,7 @@ def test_qualification_audits_each_interface_cache() -> None:
     preflight_line = next(
         line
         for line in result.stdout.splitlines()
-        if "scripts/audit_bones_seed_phase5.py" in line
+        if "scripts/data/audit_bones_seed_phase5.py" in line
     )
     assert "--expected_dataset_path" not in preflight_line
     assert (

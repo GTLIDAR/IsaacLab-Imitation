@@ -10,7 +10,7 @@
 .. code-block:: bash
 
     # Usage
-    python scripts/csv_to_npz.py -f path_to_input.csv --input_fps 60
+    python scripts/data/csv_to_npz.py -f path_to_input.csv --input_fps 60
 """
 
 """Launch Isaac Sim Simulator first."""
@@ -26,7 +26,7 @@ import numpy as np
 def _append_workspace_sources() -> None:
     """Best-effort source path setup for local mono-workspace usage."""
     this_file = Path(__file__).resolve()
-    repo_root = this_file.parents[1]
+    repo_root = this_file.parents[2]
     workspace_root = repo_root.parent
     candidate_paths = [
         repo_root / "IsaacLab" / "source" / "isaaclab",

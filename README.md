@@ -10,9 +10,11 @@ RLOpt and RSL-RL.
 ## What is in this repo
 
 - `source/isaaclab_imitation`: the installable Isaac Lab extension package
+- `scripts/`: CLI atoms under `data/`, `rlopt/`, `eval/`, `smoke/`, and `benchmark/`
+  (see `scripts/README.md`)
 - `scripts/rlopt`: training and playback entrypoints for RLOpt
 - `scripts/rsl_rl`: training entrypoints for RSL-RL
-- `scripts/zero_agent.py`, `scripts/random_agent.py`: smoke-test environment runners
+- `scripts/smoke/zero_agent.py`, `scripts/smoke/random_agent.py`: smoke-test environment runners
 - `IsaacLab/`, `RLOpt/`, `ImitationLearningTools/`: required submodule checkouts
 - `source/isaaclab_imitation/isaaclab_imitation/assets/unitree`: vendored Unitree G1 URDF, meshes, and robot config
 - `docker/cluster`: cluster submission utilities
@@ -112,7 +114,7 @@ desired label sequence:
 
 ```bash
 TERM=xterm PYTHONUNBUFFERED=1 \
-pixi run -e isaaclab-lerobot python scripts/replay_unitree_lerobot_reference.py \
+pixi run -e isaaclab-lerobot python scripts/eval/replay_unitree_lerobot_reference.py \
     --headless \
     --device cuda:0 \
     --repo_id unitreerobotics/G1_WBT_Brainco_Pickup_Pillow \
@@ -126,7 +128,7 @@ pixi run -e isaaclab-lerobot python scripts/replay_unitree_lerobot_reference.py 
     --overwrite_npz
 ```
 
-For multiple episodes, use `scripts/batch_csv_to_npz.py` with LeRobot jobs:
+For multiple episodes, use `scripts/data/batch_csv_to_npz.py` with LeRobot jobs:
 
 ```json
 [
@@ -146,13 +148,13 @@ For multiple episodes, use `scripts/batch_csv_to_npz.py` with LeRobot jobs:
 
 ```bash
 TERM=xterm PYTHONUNBUFFERED=1 \
-pixi run -e isaaclab-lerobot python scripts/batch_csv_to_npz.py \
+pixi run -e isaaclab-lerobot python scripts/data/batch_csv_to_npz.py \
     --headless \
     --device cuda:0 \
     --jobs_json data/unitree/lerobot_jobs.json \
     --output_fps 30
 
-pixi run python scripts/write_lafan1_npz_manifest.py \
+pixi run python scripts/data/write_lafan1_npz_manifest.py \
     --npz_dir data/unitree/npz \
     --manifest_path data/unitree/manifests/g1_wbt_pillow_30hz.json \
     --dataset_name unitree_lerobot
@@ -170,7 +172,7 @@ list when `agent.offline_dataset.enabled=true`.
 Probe the multi-repo streaming cache without launching Isaac:
 
 ```bash
-pixi run -e lerobot python scripts/validate_lerobot_streaming_cache.py \
+pixi run -e lerobot python scripts/eval/validate_lerobot_streaming_cache.py \
     --repo_ids_file data/unitree/g1_wbt_lerobot_repos.json \
     --max_episodes_per_repo 1 \
     --min_ready_transitions 32 \
@@ -515,7 +517,7 @@ The simplest way to get the full local G1 dataset from the public Hugging Face d
 `lvhaidong/LAFAN1_Retargeting_Dataset` is the shell wrapper:
 
 ```bash
-./scripts/download_g1_lafan1_data.sh
+./scripts/data/download_g1_lafan1_data.sh
 ```
 
 This downloads the G1 subset into `data/` and then runs the local NPZ + manifest preparation step.
@@ -525,7 +527,7 @@ To bake the G1 arms-up alignment trim into the generated NPZ files, pass
 The underlying Python entrypoint is:
 
 ```bash
-pixi run -e isaaclab python scripts/setup_lafan1_dataset.py \
+pixi run -e isaaclab python scripts/data/setup_lafan1_dataset.py \
     --prepare-npz --headless
 ```
 
@@ -533,7 +535,7 @@ For the G1 retargeted set, the public CSV motions often begin with an arms-up
 alignment pose. To bake a per-motion trim into the generated NPZ files, add:
 
 ```bash
-pixi run -e isaaclab python scripts/setup_lafan1_dataset.py \
+pixi run -e isaaclab python scripts/data/setup_lafan1_dataset.py \
     --prepare-npz --headless \
     --auto_trim_mode g1_shoulder_roll
 ```
@@ -556,7 +558,7 @@ If `data/lafan1/manifests/g1_lafan1_manifest.json` already exists, you do not ne
 If you already have local NPZ files but no manifest yet, generate one directly:
 
 ```bash
-pixi run python scripts/write_lafan1_npz_manifest.py \
+pixi run python scripts/data/write_lafan1_npz_manifest.py \
     --npz_dir data/lafan1/npz/g1 \
     --manifest_path data/lafan1/manifests/g1_lafan1_manifest.json
 ```
@@ -572,7 +574,7 @@ cp source/isaaclab_imitation/isaaclab_imitation/manifests/g1_lafan1_manifest.tem
 For a smaller local subset:
 
 ```bash
-pixi run python scripts/write_lafan1_npz_manifest.py \
+pixi run python scripts/data/write_lafan1_npz_manifest.py \
     --npz_dir data/lafan1/npz/g1 \
     --manifest_path data/lafan1/manifests/g1_debug_manifest.json \
     --select dance1_subject1 dance1_subject2 walk1_subject1
@@ -583,7 +585,7 @@ pixi run python scripts/write_lafan1_npz_manifest.py \
 Prepare local CSV motions into NPZ plus a manifest with:
 
 ```bash
-pixi run -e isaaclab python scripts/prepare_lafan1_from_csv.py \
+pixi run -e isaaclab python scripts/data/prepare_lafan1_from_csv.py \
     --csv_dir /absolute/path/to/csv_motions \
     --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
     --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
@@ -595,7 +597,7 @@ If you want one replay MP4 per converted motion, add `--record_videos` and `--vi
 To auto-trim the G1 arms-up alignment segment while rebuilding NPZ files, add:
 
 ```bash
-pixi run -e isaaclab python scripts/prepare_lafan1_from_csv.py \
+pixi run -e isaaclab python scripts/data/prepare_lafan1_from_csv.py \
     --csv_dir /absolute/path/to/csv_motions \
     --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
     --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
@@ -612,7 +614,7 @@ If you already have NPZ files and only want a trimmed manifest without
 rewriting those NPZ files, use:
 
 ```bash
-pixi run -e isaaclab python scripts/prepare_lafan1_from_csv.py \
+pixi run -e isaaclab python scripts/data/prepare_lafan1_from_csv.py \
     --csv_dir /absolute/path/to/csv_motions \
     --npz_dir /absolute/path/to/data/lafan1/npz/g1 \
     --manifest_path /absolute/path/to/data/lafan1/manifests/g1_lafan1_manifest.json \
@@ -629,7 +631,7 @@ In that mode the per-motion trim is written into each manifest entry as
 If you only want the prepared NPZ subtree, use:
 
 ```bash
-pixi run python scripts/setup_g1_lafan1_npz_dataset.py
+pixi run python scripts/data/setup_g1_lafan1_npz_dataset.py
 ```
 
 That syncs `npz/g1` from the dataset repo `GeorgiaTech/g1_lafan1_50hz` into:
@@ -641,7 +643,7 @@ data/lafan1/npz/g1/
 Upload mode pushes the same local NPZ tree back to Hugging Face:
 
 ```bash
-pixi run python scripts/setup_g1_lafan1_npz_dataset.py \
+pixi run python scripts/data/setup_g1_lafan1_npz_dataset.py \
     --mode upload --token "$HF_TOKEN"
 ```
 
@@ -670,7 +672,7 @@ Any train/play command accepts the same `physics=<preset>` override, e.g.
 Run a zero-action smoke test:
 
 ```bash
-python scripts/zero_agent.py \
+python scripts/smoke/zero_agent.py \
     --task Isaac-Imitation-G1-v0 \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
@@ -678,7 +680,7 @@ python scripts/zero_agent.py \
 Run a random-action smoke test:
 
 ```bash
-python scripts/random_agent.py \
+python scripts/smoke/random_agent.py \
     --task Isaac-Imitation-G1-v0 \
     env.lafan1_manifest_path=./data/lafan1/manifests/g1_lafan1_manifest.json
 ```
@@ -695,7 +697,7 @@ python scripts/rlopt/play.py \
 Compare an RLOpt policy checkpoint against the synchronized reference motion:
 
 ```bash
-python scripts/compare_policy_reference.py \
+python scripts/eval/compare_policy_reference.py \
     --task Isaac-Imitation-G1-Latent-v0 \
     --algo IPMD \
     --checkpoint /absolute/path/to/checkpoint.pt \
@@ -706,7 +708,7 @@ python scripts/compare_policy_reference.py \
 Replay all 40 local G1 LAFAN1 motions from the full manifest:
 
 ```bash
-python scripts/replay_reference.py \
+python scripts/eval/replay_reference.py \
     --task Isaac-Imitation-G1-v0 \
     --motion_manifest data/lafan1/manifests/g1_lafan1_manifest.json \
     --motion_refresh_dataset \
@@ -811,8 +813,8 @@ layout and environment variables.
 Cluster jobs submitted through `docker/cluster/cluster_interface.sh job ...` now auto-check the G1 dataset tree before
 running the user workload. The container-side preflight in `docker/cluster/run_singularity.sh` verifies that the G1 NPZ
 tree under `${CLUSTER_G1_DATA_ROOT:-${CLUSTER_DATA_DIR}/lafan1}` contains at least 40 motions. If the dataset is
-incomplete, it downloads the G1 NPZ dataset from Hugging Face with `scripts/setup_g1_lafan1_npz_dataset.py` and
-regenerates `g1_lafan1_manifest.json` with `scripts/write_lafan1_npz_manifest.py` only when the manifest is missing or
+incomplete, it downloads the G1 NPZ dataset from Hugging Face with `scripts/data/setup_g1_lafan1_npz_dataset.py` and
+regenerates `g1_lafan1_manifest.json` with `scripts/data/write_lafan1_npz_manifest.py` only when the manifest is missing or
 older than the NPZ files. You can override that behavior with `CLUSTER_G1_MANIFEST_REFRESH_POLICY`:
 `auto` regenerates only when needed, `never` leaves the manifest untouched, and `always` regenerates on every job.
 
