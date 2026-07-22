@@ -17,7 +17,7 @@ from pathlib import Path
 def _append_workspace_sources() -> None:
     """Best-effort source path setup for local mono-workspace usage."""
     this_file = Path(__file__).resolve()
-    repo_root = this_file.parents[1]
+    repo_root = this_file.parents[2]
     workspace_root = repo_root.parent
     candidate_paths = [
         repo_root / "IsaacLab" / "source" / "isaaclab",

@@ -13,7 +13,8 @@ typecheck = "pyrefly check"
 check = { depends-on = ["lint", "format-check", "typecheck"] }
 test-rlopt = { cmd = "pytest tests/test_ipmd_components.py tests/test_offline_dataset.py tests/test_gail_amp_ase_components.py tests/test_skill_commander.py -o 'filterwarnings=ignore:Creating VanillaWeightUpdater.*:DeprecationWarning'", cwd = "RLOpt" }
 test-runtime-bootstrap = "pytest -q source/isaaclab_imitation/test_rlopt_runtime_bootstrap.py"
-test-default = { depends-on = ["test-rlopt", "test-runtime-bootstrap"] }
+test-bones-seed-scripts = "pytest -q tests/test_audit_bones_seed_phase5.py tests/test_compare_bones_seed_exports.py tests/test_prepare_bones_seed_phase5.py"
+test-default = { depends-on = ["test-rlopt", "test-runtime-bootstrap", "test-bones-seed-scripts"] }
 
 [dependencies]
 python = "3.12.*"
@@ -69,7 +70,7 @@ isaaclab_imitation = { path = "./source/isaaclab_imitation", editable = true }
 
 [feature.isaaclab.tasks]
 test-isaaclab = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES pytest source/isaaclab_imitation/test_causal_planner_observation.py source/isaaclab_imitation/test_policy_supervision_contract.py source/isaaclab_imitation/test_g1_backend_joint_contract.py source/isaaclab_imitation/test_g1_metrics_contract.py"
-zero-agent = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES python scripts/zero_agent.py --task Isaac-Imitation-G1-LafanTrack-v0"
+zero-agent = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES python scripts/smoke/zero_agent.py --task Isaac-Imitation-G1-LafanTrack-v0"
 smoke-ipmd = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/rlopt/train_physx.py --task Isaac-Imitation-G1-Latent-v0 --algo IPMD --num_envs 16 --max_iterations 1 --headless --kit_args=--/app/extensions/fsWatcherEnabled=false env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json agent.logger.backend= agent.ipmd.command_source=posterior"
 smoke-future-cvae = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/rlopt/train_physx.py --task Isaac-Imitation-G1-Latent-FutureCVAE-v0 --algo IPMD --num_envs 4 --max_iterations 1 --headless --kit_args=--/app/extensions/fsWatcherEnabled=false env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json agent.logger.backend= agent.ipmd.command_source=posterior"
 smoke-per-step-vq = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/rlopt/train_physx.py --task Isaac-Imitation-G1-Latent-PerStepVQ-v0 --algo IPMD --num_envs 4 --max_iterations 1 --headless --kit_args=--/app/extensions/fsWatcherEnabled=false env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json agent.logger.backend= agent.ipmd.command_source=posterior"
@@ -79,9 +80,9 @@ hl-skill-pipeline = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 
 # the throughput benchmark driver (quick = a few iterations; full ~10M frames/backend).
 smoke-vanilla-physx = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/rlopt/train_physx.py --task Isaac-Imitation-G1-v0 --algo PPO --num_envs 16 --max_iterations 1 --headless --kit_args=--/app/extensions/fsWatcherEnabled=false env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json agent.logger.backend= physics=physx"
 smoke-vanilla-newton = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/rlopt/train.py --task Isaac-Imitation-G1-v0 --algo PPO --num_envs 16 --max_iterations 1 --headless --assert-kitless --kit_args=--/app/extensions/fsWatcherEnabled=false env.lafan1_manifest_path=./data/unitree/manifests/g1_unitree_dance102_manifest.json agent.logger.backend= physics=newton_mjwarp"
-bench-backends-quick = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/benchmark_physics_backends.py --num_envs 1024 --iterations 5"
-bench-backends = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/benchmark_physics_backends.py"
-bench-renderers = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 python scripts/benchmark_renderers.py"
+bench-backends-quick = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/benchmark/benchmark_physics_backends.py --num_envs 1024 --iterations 5"
+bench-backends = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 HYDRA_FULL_ERROR=1 TORCHDYNAMO_DISABLE=1 python scripts/benchmark/benchmark_physics_backends.py"
+bench-renderers = "env TERM=xterm OMNI_KIT_ACCEPT_EULA=YES PYTHONUNBUFFERED=1 python scripts/benchmark/benchmark_renderers.py"
 
 [feature.lerobot.pypi-dependencies]
 datasets = "*"

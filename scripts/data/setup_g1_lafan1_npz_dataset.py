@@ -6,14 +6,14 @@
 
 """Sync the G1 LAFAN1 NPZ dataset with a Hugging Face dataset repo.
 
-This script is a companion to ``scripts/setup_lafan1_dataset.py``. Unlike the
+This script is a companion to ``scripts/data/setup_lafan1_dataset.py``. Unlike the
 CSV-based workflow, it only handles an ``npz/g1`` subtree that is already ready
 for this repo's NPZ loader tooling.
 
 Examples:
-    pixi run python scripts/setup_g1_lafan1_npz_dataset.py
+    pixi run python scripts/data/setup_g1_lafan1_npz_dataset.py
 
-    pixi run python scripts/setup_g1_lafan1_npz_dataset.py \
+    pixi run python scripts/data/setup_g1_lafan1_npz_dataset.py \
         --mode upload --token "$HF_TOKEN"
 """
 
@@ -38,7 +38,7 @@ DEFAULT_REPO_SUBDIR = "npz/g1"
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def _default_data_root() -> Path:
@@ -294,7 +294,7 @@ def main() -> None:
 
         preview_cmd = [
             args.python,
-            str(_repo_root() / "scripts" / "write_lafan1_npz_manifest.py"),
+            str(_repo_root() / "scripts" / "data" / "write_lafan1_npz_manifest.py"),
             "--npz_dir",
             str(local_npz_dir),
             "--manifest_path",

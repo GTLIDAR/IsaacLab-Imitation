@@ -14,7 +14,7 @@ from pathlib import Path
 
 def _append_workspace_sources() -> None:
     this_file = Path(__file__).resolve()
-    repo_root = this_file.parents[1]
+    repo_root = this_file.parents[2]
     candidate_paths = [
         repo_root / "ImitationLearningTools",
         repo_root / "ImitationLearningTools" / "iltools",

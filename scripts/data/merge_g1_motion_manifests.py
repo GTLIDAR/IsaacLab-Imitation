@@ -7,7 +7,7 @@ names are source-prefixed by default, and a compact language sidecar is written
 alongside the manifest for building language-goal embedding tables.
 
 Example:
-    pixi run python scripts/merge_g1_motion_manifests.py
+    pixi run python scripts/data/merge_g1_motion_manifests.py
 
     pixi run python scripts/rlopt/build_language_goal_embeddings.py \
         --manifest data/unified/manifests/g1_lafan1_dance102_bones_seed_manifest.json \
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_LAFAN1_MANIFEST = REPO_ROOT / "data/lafan1/manifests/g1_lafan1_manifest.json"
 DEFAULT_LAFAN1_LANGUAGE = (

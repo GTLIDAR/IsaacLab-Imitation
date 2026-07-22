@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run reference/policy comparison once per expert trajectory.
 
-This is a thin orchestrator around ``scripts/compare_policy_reference.py``.  It
+This is a thin orchestrator around ``scripts/eval/compare_policy_reference.py``.  It
 launches one Isaac process per trajectory rank so Gym's video recorder creates a
 separate MP4 for every expert trajectory, while the single-trajectory script
 remains the source of truth for controller/planner/replay behavior.
@@ -19,8 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_EVAL_SCRIPT = REPO_ROOT / "scripts" / "compare_policy_reference.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_EVAL_SCRIPT = REPO_ROOT / "scripts" / "eval" / "compare_policy_reference.py"
 
 
 def _parse_args() -> tuple[argparse.Namespace, list[str]]:

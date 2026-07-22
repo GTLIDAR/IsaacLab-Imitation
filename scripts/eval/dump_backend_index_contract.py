@@ -18,17 +18,17 @@ Examples (run from the repository root):
 
 .. code-block:: bash
 
-    pixi run -e isaaclab python scripts/dump_backend_index_contract.py \
+    pixi run -e isaaclab python scripts/eval/dump_backend_index_contract.py \
         --task Isaac-Imitation-G1-Latent-Strict-v0 \
         --output logs/index_contract/newton.json \
         physics=newton_mjwarp
 
-    pixi run -e isaaclab python scripts/dump_backend_index_contract.py \
+    pixi run -e isaaclab python scripts/eval/dump_backend_index_contract.py \
         --task Isaac-Imitation-G1-Latent-Strict-v0 \
         --output logs/index_contract/physx.json \
         physics=physx
 
-    python scripts/dump_backend_index_contract.py --compare \
+    python scripts/eval/dump_backend_index_contract.py --compare \
         logs/index_contract/newton.json logs/index_contract/physx.json
 """
 
@@ -42,7 +42,7 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-RUNTIME_HELPER_DIR = SCRIPT_DIR / "rlopt"
+RUNTIME_HELPER_DIR = SCRIPT_DIR.parent / "rlopt"
 if str(RUNTIME_HELPER_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_HELPER_DIR))
 

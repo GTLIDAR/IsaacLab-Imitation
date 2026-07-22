@@ -10,15 +10,15 @@ By default this script downloads the Unitree G1 subset from:
 https://huggingface.co/datasets/lvhaidong/LAFAN1_Retargeting_Dataset
 
 It can also optionally convert the downloaded CSV files into NPZ motions and
-generate a manifest JSON by delegating to ``scripts/prepare_lafan1_from_csv.py``.
+generate a manifest JSON by delegating to ``scripts/data/prepare_lafan1_from_csv.py``.
 
 Examples:
-    pixi run python scripts/setup_lafan1_dataset.py
+    pixi run python scripts/data/setup_lafan1_dataset.py
 
-    pixi run -e isaaclab python scripts/setup_lafan1_dataset.py \
+    pixi run -e isaaclab python scripts/data/setup_lafan1_dataset.py \
         --prepare-npz --headless
 
-    pixi run -e isaaclab python scripts/setup_lafan1_dataset.py \
+    pixi run -e isaaclab python scripts/data/setup_lafan1_dataset.py \
         --prepare-npz --headless --auto_trim_mode g1_shoulder_roll
 """
 
@@ -46,7 +46,7 @@ ROBOT_CHOICES = ("g1", "h1", "h1_2", "all")
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return Path(__file__).resolve().parents[2]
 
 
 def _default_data_root() -> Path:
@@ -66,7 +66,7 @@ def _resolve_converter_script(explicit_path: str | None) -> Path | None:
 
     repo_root = _repo_root()
     candidate_paths = [
-        repo_root / "scripts" / "csv_to_npz.py",
+        repo_root / "scripts" / "data" / "csv_to_npz.py",
     ]
     for path in candidate_paths:
         if path.is_file():

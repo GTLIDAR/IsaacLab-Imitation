@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 PIXI_ENVIRONMENT="${PIXI_ENVIRONMENT:-isaaclab}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
@@ -24,4 +24,4 @@ log "Pixi environment: ${PIXI_ENVIRONMENT}"
 
 cd "${REPO_ROOT}"
 exec pixi run --environment "${PIXI_ENVIRONMENT}" "${PYTHON_BIN}" \
-    "scripts/setup_lafan1_dataset.py" --prepare-npz --headless "$@"
+    "scripts/data/setup_lafan1_dataset.py" --prepare-npz --headless "$@"
