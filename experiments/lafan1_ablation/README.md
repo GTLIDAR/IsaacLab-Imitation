@@ -48,9 +48,19 @@ DRY_RUN=1 experiments/lafan1_ablation/submit_cluster_horizon.sh
 W10 smoke:
 
 ```bash
-CLUSTER_PROFILE=skynet_lafan1_ablation \
+PHYSICS_BACKEND=newton_mjwarp \
 DRY_RUN=0 BUDGET=smoke RANKS=0 WINDOWS=10 \
 INTERFACES="latent_cont latent_fsq ee_chunk wb_chunk" \
+experiments/lafan1_ablation/submit_cluster_horizon.sh
+```
+
+Full run:
+
+```bash
+PHYSICS_BACKEND=newton_mjwarp \
+CLUSTER_SLURM_QOS=short \
+CLUSTER_SLURM_TIME_LIMIT=2-00:00:00 \
+DRY_RUN=0 BUDGET=full \
 experiments/lafan1_ablation/submit_cluster_horizon.sh
 ```
 
